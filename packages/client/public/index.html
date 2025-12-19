@@ -21,19 +21,44 @@
         <h1>Neko233 VPN</h1>
         <div id="status" class="status offline">Status: Disconnected</div>
         
+        <div style="margin-bottom: 20px;">
+            <button onclick="restartClient()" style="background: #d93025;">Restart VPN</button>
+            <span id="active-conns" style="margin-left: 10px;">Active: 0</span>
+        </div>
+
+        <h3>Logs</h3>
+        <div id="logs" style="background: #1e1e1e; color: #d4d4d4; padding: 10px; height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; border-radius: 4px; margin-bottom: 20px;">
+        </div>
+
         <h3>Direct Domains (Bypass)</h3>
-        <p>One domain per line</p>
+        <p>One domain/IP per line (supports * wildcard)</p>
         <textarea id="rules"></textarea>
         <br><br>
-        <button onclick="saveRules()">Save & Restart</button>
+        <button onclick="saveRules()">Save & Apply</button>
     </div>
 
     <script>
-        async function loadConfig() {
-            const res = await fetch('/api/config');
-            const config = await res.json();
-            document.getElementById('rules').value = config.rules.direct.join('\n');
-            updateStatus();
+        async function loadData() {
+            const res = await fetch('/api/status');
+            const data = await res.json();
+            
+            // Update Status
+            const statusEl = document.getElementById('status');
+            statusEl.innerText = `Status: ${data.connected ? 'Connected' : 'Disconnected'}`;
+            statusEl.className = `status ${data.connected ? 'online' : 'offline'}`;
+            
+            document.getElementById('active-conns').innerText = `Active: ${data.activeConnections}`;
+            
+            // Update Rules (only once)
+            if (!document.getElementById('rules').value) {
+                document.getElementById('rules').value = data.config.rules.direct.join('\n');
+            }
+
+            // Update Logs
+            const logsEl = document.getElementById('logs');
+            const isAtBottom = logsEl.scrollHeight - logsEl.clientHeight <= logsEl.scrollTop + 1;
+            logsEl.innerHTML = data.logs.map(log => `<div>${log}</div>`).join('');
+            if (isAtBottom) logsEl.scrollTop = logsEl.scrollHeight;
         }
 
         async function saveRules() {
@@ -43,20 +68,18 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ rules: { direct: rules } })
             });
-            alert('Config saved! Restarting client...');
-            location.reload();
+            alert('Config saved and applied!');
         }
 
-        async function updateStatus() {
-            const res = await fetch('/api/status');
-            const data = await res.json();
-            const statusEl = document.getElementById('status');
-            statusEl.innerText = `Status: ${data.connected ? 'Connected' : 'Disconnected'}`;
-            statusEl.className = `status ${data.connected ? 'online' : 'offline'}`;
+        async function restartClient() {
+            if (confirm('Restart VPN services?')) {
+                await fetch('/api/restart', { method: 'POST' });
+                alert('Restarting...');
+            }
         }
 
-        loadConfig();
-        setInterval(updateStatus, 3000);
+        loadData();
+        setInterval(loadData, 2000);
     </script>
 </body>
 </html>

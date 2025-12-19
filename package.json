@@ -14,6 +14,8 @@
     "package:host": "bun run --cwd packages/server package:host && bun run --cwd packages/client package:host"
   },
   "devDependencies": {
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vite": "latest",
+    "rolldown": "latest"
   }
 }

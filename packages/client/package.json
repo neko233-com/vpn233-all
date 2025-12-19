@@ -9,7 +9,8 @@
     "package:win": "bun build ./dist/index.js --compile --target=bun-windows-x64 --outfile bin/vpn-client-win.exe",
     "package:mac": "bun build ./dist/index.js --compile --target=bun-macos-x64 --outfile bin/vpn-client-mac",
     "package:linux": "bun build ./dist/index.js --compile --target=bun-linux-x64 --outfile bin/vpn-client-linux",
-    "package:host": "bun run build && bun build ./dist/index.js --compile --outfile bin/vpn-client"
+    "package:host": "bun run build && bun build ./dist/index.js --compile --outfile bin/vpn-client",
+    "dist:linux": "bun run build && copy dist\\index.js bin\\vpn-client.js"
   },
   "devDependencies": {
     "vite": "latest",
