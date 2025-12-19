@@ -1,0 +1,18 @@
+{
+  "name": "@neko233-vpn/client",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "build": "vite build",
+    "package": "bun run build && bun run package:win && bun run package:mac && bun run package:linux",
+    "package:win": "bun build ./dist/index.js --compile --target=bun-windows-x64 --outfile bin/vpn-client-win.exe",
+    "package:mac": "bun build ./dist/index.js --compile --target=bun-macos-x64 --outfile bin/vpn-client-mac",
+    "package:linux": "bun build ./dist/index.js --compile --target=bun-linux-x64 --outfile bin/vpn-client-linux",
+    "package:host": "bun run build && bun build ./dist/index.js --compile --outfile bin/vpn-client"
+  },
+  "devDependencies": {
+    "vite": "latest",
+    "rolldown": "latest"
+  }
+}

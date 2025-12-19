@@ -1,0 +1,15 @@
+{
+  "name": "@neko233-vpn/server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "build": "vite build",
+    "package": "bun run build && bun build ./dist/index.js --compile --target=bun-linux-x64 --outfile bin/vpn-server-linux",
+    "package:host": "bun run build && bun build ./dist/index.js --compile --outfile bin/vpn-server"
+  },
+  "devDependencies": {
+    "vite": "latest",
+    "rolldown": "latest"
+  }
+}

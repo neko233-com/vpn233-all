@@ -1,0 +1,19 @@
+{
+  "name": "neko233-vpn",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build:server": "bun run --cwd packages/server build",
+    "build:client": "bun run --cwd packages/client build",
+    "package:all": "bun run package:server && bun run package:client",
+    "package:server": "bun run --cwd packages/server package",
+    "package:client": "bun run --cwd packages/client package",
+    "package:host": "bun run --cwd packages/server package:host && bun run --cwd packages/client package:host"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

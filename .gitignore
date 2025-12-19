@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build outputs
+dist/
+bin/
+*.exe
+*.exe.stackdump
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun.lockb
+
+# OS files
+.DS_Store
+Thumbs.db

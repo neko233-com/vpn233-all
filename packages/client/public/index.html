@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neko233 VPN Client</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f0f2f5; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto; }
+        h1 { color: #1a73e8; }
+        .status { margin-bottom: 20px; padding: 10px; border-radius: 4px; }
+        .online { background: #e6ffed; color: #22863a; }
+        .offline { background: #ffeef0; color: #cb2431; }
+        textarea { width: 100%; height: 150px; margin-top: 10px; }
+        button { background: #1a73e8; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #1557b0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Neko233 VPN</h1>
+        <div id="status" class="status offline">Status: Disconnected</div>
+        
+        <h3>Direct Domains (Bypass)</h3>
+        <p>One domain per line</p>
+        <textarea id="rules"></textarea>
+        <br><br>
+        <button onclick="saveRules()">Save & Restart</button>
+    </div>
+
+    <script>
+        async function loadConfig() {
+            const res = await fetch('/api/config');
+            const config = await res.json();
+            document.getElementById('rules').value = config.rules.direct.join('\n');
+            updateStatus();
+        }
+
+        async function saveRules() {
+            const rules = document.getElementById('rules').value.split('\n').filter(r => r.trim());
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rules: { direct: rules } })
+            });
+            alert('Config saved! Restarting client...');
+            location.reload();
+        }
+
+        async function updateStatus() {
+            const res = await fetch('/api/status');
+            const data = await res.json();
+            const statusEl = document.getElementById('status');
+            statusEl.innerText = `Status: ${data.connected ? 'Connected' : 'Disconnected'}`;
+            statusEl.className = `status ${data.connected ? 'online' : 'offline'}`;
+        }
+
+        loadConfig();
+        setInterval(updateStatus, 3000);
+    </script>
+</body>
+</html>
