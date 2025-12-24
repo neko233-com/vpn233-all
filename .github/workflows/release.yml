@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - name: Run Tests
+        run: |
+          cd tests
+          go test -v automation_test.go
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: windows
+            arch: amd64
+            suffix: .exe
+          - os: linux
+            arch: amd64
+            suffix: ""
+          - os: darwin
+            arch: amd64
+            suffix: ""
+          - os: darwin
+            arch: arm64
+            suffix: ""
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build Client
+        run: |
+          cd client-vpn-neko233
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -o ../release/vpn233-client-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }} main.go
+
+      - name: Build Server
+        run: |
+          cd server-vpn-neko233
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -o ../release/vpn233-server-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }} main.go
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpn233-${{ matrix.os }}-${{ matrix.arch }}
+          path: release/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare Release Files
+        run: |
+          mkdir -p release_dist
+          cp -r artifacts/*/* release_dist/
+          # Add config templates and management scripts
+          cp client-vpn-neko233/config.json release_dist/client-config.example.json
+          cp client-vpn-neko233/rules.yaml release_dist/rules.example.yaml
+          cp client-vpn-neko233/vpn233_client.cmd release_dist/vpn233_client.cmd
+          cp client-vpn-neko233/vpn233_client.sh release_dist/vpn233_client.sh
+          cp server-vpn-neko233/config.json release_dist/server-config.example.json
+          cp server-vpn-neko233/vpn233_server.cmd release_dist/vpn233_server.cmd
+          cp server-vpn-neko233/vpn233_server.sh release_dist/vpn233_server.sh
+          chmod +x release_dist/*.sh
+          cd release_dist
+          zip -r ../vpn233-all-platforms.zip .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: vpn233-all-platforms.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

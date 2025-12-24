@@ -7,8 +7,8 @@ import (
 // Handshaker defines how to establish the initial VPN connection and obfuscation.
 type Handshaker interface {
 	// ServerHandshake handles the incoming connection on the server side.
-	// Returns the wrapped connection (encrypted), the target address requested, and an error.
-	ServerHandshake(conn net.Conn) (net.Conn, string, error)
+	// Returns the wrapped connection (encrypted), the target address requested, username, and an error.
+	ServerHandshake(conn net.Conn) (net.Conn, string, string, error)
 }
 
 // Cipher defines the encryption/decryption interface.

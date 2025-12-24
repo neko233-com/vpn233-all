@@ -1,39 +1,61 @@
-# Neko233 VPN (Go Rewrite)
+# VPN233 - DIY 高性能安全代理系统
 
-这是一个用 Go 语言重写的 VPN 项目，包含服务端和客户端。
+VPN233 是一个基于 Go 语言开发的、高度可扩展的 DIY 代理系统。它采用了类似 REALITY 的握手协议，支持 TUN 模式、多用户管理、实时流量监控以及动态路由切换。
 
-## 特性
-- **多协议支持**: 客户端支持 **SOCKS5**、**HTTP** 代理以及 **TUN (Tunnel)** 模式。
-- **DNS 劫持**: 内置 DNS 服务器，支持分流解析，防止 DNS 泄漏。
-- **Clash 兼容路由**: 路由规则独立为 `rules.yaml`，兼容 Clash 的规则格式（DOMAIN, IP-CIDR 等），可直接复用 Clash 生态。
-- **CLI 友好**: 运行不带参数时自动显示帮助信息，支持 `-c` 指定配置文件。
-- **REALITY 伪装**: 服务端支持流量伪装，未授权的连接将转发至目标网站。
-- **安全加密**: 握手阶段采用 **AES-GCM** 加密，确保目标地址等敏感信息不被探测。
-- **一键打包**: 根目录提供 `.cmd` 脚本，打包后的名字为 `vpn233-client` 和 `vpn233-server`。
+## 目的
+本项目旨在提供一个轻量级、安全且易于二次开发的代理解决方案。通过 DIY 协议握手，规避常见的流量特征识别，同时提供完善的运营监控界面，方便个人或小团队管理代理资源。
 
-## 目录结构
-- `server-vpn-neko233/`: 服务端代码
-- `client-vpn-neko233/`: 客户端代码
-- `client-vpn-neko233/rules.yaml`: 路由规则文件（Clash 格式）
-- `server-打包-linux.cmd`: 打包生成 `vpn233-server`
-- `client-打包-windows-macos-linux.cmd`: 打包生成 `vpn233-client`
+## 技术架构
+- **核心协议**: 基于 AES-GCM 加密的自定义握手协议，支持 ShortID 验证和伪装目标转发（REALITY 风格）。
+- **客户端**:
+  - **多入站支持**: SOCKS5, HTTP, TUN 模式。
+  - **分流引擎**: 基于域名、IP-CIDR 的规则分流，支持规则分组和动态切换。
+  - **Web GUI**: 实时查看流量、连接、路由追踪及配置管理。
+- **服务端**:
+  - **多用户管理**: 基于本地 JSON 文件的持久化用户数据库。
+  - **流量统计**: 每日流量明细记录，支持按用户查看。
+  - **Web Admin**: 完善的后台管理界面，支持连接控制和日志审计。
+- **日志系统**: 支持滚动日志（Log Rotation），防止日志文件无限增长。
 
-## 使用方法
-1. **服务端**:
-   - 修改 `server-vpn-neko233/config.json`。
-   - 运行 `server-打包-linux.cmd`。
-   - 部署 `vpn233-server` 到 Linux。
-   - 运行：`./vpn233-server -c config.json`
+## 环境依赖和版本要求
+- **Go**: 1.21 或更高版本。
+- **操作系统**: 
+  - **Windows**: 支持所有功能（包括 TUN 模式，需管理员权限）。
+  - **Linux**: 支持所有功能（TUN 模式需 root 权限）。
+  - **macOS**: 支持所有功能。
+- **依赖库**: 仅使用少量核心库（如 `google/gopacket` 用于 TUN 模式处理）。
 
-2. **客户端**:
-   - 修改 `client-vpn-neko233/config.json` 和 `rules.yaml`。
-   - 运行 `client-打包-windows-macos-linux.cmd`。
-   - 运行：`vpn233-client -c config.json`
-   - **帮助**: 运行 `vpn233-client -h` 查看更多选项。
+## 如何使用
 
+### 1. 快速启动服务端
+```bash
+cd server-vpn-neko233
+# 修改 config.json 配置你的端口和用户
+go run main.go -c config.json
+```
+访问 `http://127.0.0.1:8083` 进入管理后台。
 
+### 2. 快速启动客户端
+```bash
+cd client-vpn-neko233
+# 修改 config.json 配置服务端的地址和 UUID
+go run main.go -c config.json
+```
+访问 `http://127.0.0.1:8082` 进入控制面板。
 
+### 3. 编译发布
+使用根目录下的脚本进行跨平台编译：
+- `client-打包-windows-macos-linux.cmd`
+- `server-打包-linux.cmd`
 
-## 注意事项
-- 本项目为简化版实现，主要展示架构和核心逻辑。
-- 生产环境下建议使用更成熟的库（如 `utls`）来增强 TLS 指纹伪装。
+## 核心功能说明
+- **连接控制**: 在 Web 界面可以实时断开指定的异常连接。
+- **动态切换**: 客户端支持在多个备选代理服务器之间一键切换，支持对特定规则组（如 YouTube）动态更改出站策略。
+- **滚动日志**: 系统会自动管理日志文件大小，确保长期运行的稳定性。
+
+## 自动化测试
+本项目包含完善的集成测试，验证代理有效性、分流规则、Web 认证及流量统计：
+```bash
+cd tests
+go test -v automation_test.go
+```
