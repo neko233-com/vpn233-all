@@ -24,14 +24,28 @@ func TestVPNAutomation(t *testing.T) {
 	go targetServer.ListenAndServe()
 	defer targetServer.Close()
 
-	// 2. Build Client and Server (optional, but let's assume they are ready or we run them with go run)
-	// For speed, we'll use 'go run'
+	// 2. Build Client and Server
+	t.Log("Building server...")
+	buildServer := exec.Command("go", "build", "-o", "vpn233-server.exe", "main.go")
+	buildServer.Dir = "../server-vpn-neko233"
+	if out, err := buildServer.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build server: %v\n%s", err, out)
+	}
+	defer os.Remove("../server-vpn-neko233/vpn233-server.exe")
+
+	t.Log("Building client...")
+	buildClient := exec.Command("go", "build", "-o", "vpn233-client.exe", "main.go")
+	buildClient.Dir = "../client-vpn-neko233"
+	if out, err := buildClient.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build client: %v\n%s", err, out)
+	}
+	defer os.Remove("../client-vpn-neko233/vpn233-client.exe")
 
 	// 3. Start VPN Server
-	serverCmd := exec.Command("go", "run", "main.go", "-c", "config.json")
+	serverCmd := exec.Command("./vpn233-server.exe", "-c", "config.json")
 	serverCmd.Dir = "../server-vpn-neko233"
-	serverCmd.Stdout = os.Stdout
-	serverCmd.Stderr = os.Stderr
+	// serverCmd.Stdout = os.Stdout
+	// serverCmd.Stderr = os.Stderr
 	err := serverCmd.Start()
 	if err != nil {
 		t.Fatalf("Failed to start server: %v", err)
@@ -39,10 +53,10 @@ func TestVPNAutomation(t *testing.T) {
 	defer serverCmd.Process.Kill()
 
 	// 4. Start VPN Client
-	clientCmd := exec.Command("go", "run", "main.go", "-c", "config.json")
+	clientCmd := exec.Command("./vpn233-client.exe", "-c", "config.json")
 	clientCmd.Dir = "../client-vpn-neko233"
-	clientCmd.Stdout = os.Stdout
-	clientCmd.Stderr = os.Stderr
+	// clientCmd.Stdout = os.Stdout
+	// clientCmd.Stderr = os.Stderr
 	err = clientCmd.Start()
 	if err != nil {
 		t.Fatalf("Failed to start client: %v", err)
