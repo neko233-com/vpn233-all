@@ -1,0 +1,16 @@
+# vpn233 Routing Rules (Clash Compatible Format)
+# Format: TYPE,PAYLOAD,OUTBOUND
+
+# Domain Rules
+DOMAIN,google.com,proxy
+DOMAIN-SUFFIX,github.com,proxy
+DOMAIN-SUFFIX,youtube.com,proxy
+DOMAIN-KEYWORD,openai,proxy
+DOMAIN-KEYWORD,telegram,proxy
+
+# IP Rules (Simplified matching)
+IP-CIDR,8.8.8.8/32,proxy
+IP-CIDR,1.1.1.1/32,proxy
+
+# Default Match
+MATCH,direct
