@@ -52,18 +52,29 @@ func TestVPNAutomation(t *testing.T) {
 	// Wait for startup (Non-blocking retry)
 	start := time.Now()
 	success := false
-	for time.Since(start) < 10*time.Second {
-		conn, err := net.DialTimeout("tcp", "127.0.0.1:1081", 500*time.Millisecond)
-		if err == nil {
-			conn.Close()
+	for time.Since(start) < 15*time.Second {
+		// Check Client Web GUI
+		cConn, cErr := net.DialTimeout("tcp", "127.0.0.1:8082", 500*time.Millisecond)
+		// Check Server Web Admin
+		sConn, sErr := net.DialTimeout("tcp", "127.0.0.1:8083", 500*time.Millisecond)
+
+		if cErr == nil && sErr == nil {
+			cConn.Close()
+			sConn.Close()
 			success = true
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
+		if cConn != nil {
+			cConn.Close()
+		}
+		if sConn != nil {
+			sConn.Close()
+		}
+		time.Sleep(1 * time.Second)
 	}
 
 	if !success {
-		t.Fatalf("Client failed to start within 10 seconds")
+		t.Fatalf("Client or Server failed to start within 15 seconds")
 	}
 
 	// 5. Verify Proxy Effectiveness
