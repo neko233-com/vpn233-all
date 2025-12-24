@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 )
 
 // MockConn is a simple net.Conn implementation for testing
@@ -17,14 +18,14 @@ type MockConn struct {
 	writeBuf *bytes.Buffer
 }
 
-func (m *MockConn) Read(b []byte) (n int, err error)  { return m.readBuf.Read(b) }
-func (m *MockConn) Write(b []byte) (n int, err error) { return m.writeBuf.Write(b) }
-func (m *MockConn) Close() error                     { return nil }
-func (m *MockConn) LocalAddr() net.Addr              { return nil }
-func (m *MockConn) RemoteAddr() net.Addr             { return nil }
-func (m *MockConn) SetDeadline(t net.Time) error      { return nil }
-func (m *MockConn) SetReadDeadline(t net.Time) error { return nil }
-func (m *MockConn) SetWriteDeadline(t net.Time) error { return nil }
+func (m *MockConn) Read(b []byte) (n int, err error)   { return m.readBuf.Read(b) }
+func (m *MockConn) Write(b []byte) (n int, err error)  { return m.writeBuf.Write(b) }
+func (m *MockConn) Close() error                       { return nil }
+func (m *MockConn) LocalAddr() net.Addr                { return nil }
+func (m *MockConn) RemoteAddr() net.Addr               { return nil }
+func (m *MockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *MockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *MockConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestRealityHandshake(t *testing.T) {
 	key := []byte("neko233-vpn-secure-key-32-bytes!")
@@ -42,10 +43,14 @@ func TestRealityHandshake(t *testing.T) {
 	clientBuf.Write(nonce)
 
 	addrBytes := []byte(targetAddr)
-	header := make([]byte, 16)
+	header := make([]byte, 2+len(addrBytes))
 	binary.BigEndian.PutUint16(header[:2], uint16(len(addrBytes)))
 	copy(header[2:], addrBytes)
 	encryptedHeader := aesgcm.Seal(nil, nonce, header, nil)
+
+	var lenBuf [2]byte
+	binary.BigEndian.PutUint16(lenBuf[:], uint16(len(encryptedHeader)))
+	clientBuf.Write(lenBuf[:])
 	clientBuf.Write(encryptedHeader)
 
 	// 2. Test Server Handshake

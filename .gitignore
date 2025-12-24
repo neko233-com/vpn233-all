@@ -2,6 +2,10 @@
 node_modules/
 .bun/
 
+release*/
+release-server/
+release-client/
+
 # Build outputs
 dist/
 bin/

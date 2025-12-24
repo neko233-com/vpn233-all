@@ -81,7 +81,7 @@ func main() {
 	// Initialize default handshaker (DIY: others can replace this)
 	handshaker = &protocol.RealityHandshaker{
 		ShortID: "sid12345",
-		Key:     []byte("neko233-vpn-secure-key-32-bytes"), // 31 bytes? No, let's use exactly 32
+		Key:     []byte("neko233-vpn-secure-key-32-bytes!"),
 	}
 
 	for _, in := range globalConfig.Inbounds {
@@ -282,11 +282,17 @@ func matchRoute(host string) string {
 	for _, rule := range routingRules {
 		switch rule.Type {
 		case "DOMAIN":
-			if host == rule.Payload { return rule.Outbound }
+			if host == rule.Payload {
+				return rule.Outbound
+			}
 		case "DOMAIN-SUFFIX":
-			if strings.HasSuffix(host, rule.Payload) { return rule.Outbound }
+			if strings.HasSuffix(host, rule.Payload) {
+				return rule.Outbound
+			}
 		case "DOMAIN-KEYWORD":
-			if strings.Contains(host, rule.Payload) { return rule.Outbound }
+			if strings.Contains(host, rule.Payload) {
+				return rule.Outbound
+			}
 		case "MATCH":
 			return rule.Outbound
 		}
@@ -296,14 +302,18 @@ func matchRoute(host string) string {
 
 func getOutbound(tag string) Outbound {
 	for _, o := range globalConfig.Outbounds {
-		if o.Tag == tag { return o }
+		if o.Tag == tag {
+			return o
+		}
 	}
 	return Outbound{Type: "direct"}
 }
 
 func connectToVPNServer(o Outbound, targetAddr string) (net.Conn, error) {
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", o.Server, o.Port))
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// DIY Handshake
 	return handshaker.ClientHandshake(conn, targetAddr)
@@ -312,12 +322,16 @@ func connectToVPNServer(o Outbound, targetAddr string) (net.Conn, error) {
 func startDNSServer(dns DNSConfig) {
 	addr, _ := net.ResolveUDPAddr("udp", dns.Listen)
 	conn, err := net.ListenUDP("udp", addr)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	defer conn.Close()
 	buf := make([]byte, 512)
 	for {
 		n, remoteAddr, err := conn.ReadFromUDP(buf)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		go func(data []byte, addr *net.UDPAddr) {
 			upstream, _ := net.Dial("udp", dns.Nameservers[0])
 			defer upstream.Close()

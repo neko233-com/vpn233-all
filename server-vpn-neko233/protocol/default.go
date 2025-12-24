@@ -17,7 +17,7 @@ type RealityHandshaker struct {
 
 func (h *RealityHandshaker) ServerHandshake(conn net.Conn) (net.Conn, string, error) {
 	br := bufio.NewReader(conn)
-	
+
 	// Peek to check ShortID without consuming
 	maxLen := 0
 	for _, sid := range h.ShortIDs {
@@ -51,14 +51,22 @@ func (h *RealityHandshaker) ServerHandshake(conn net.Conn) (net.Conn, string, er
 	// Now we know it's a VPN request, consume the ShortID
 	br.Discard(sidLen)
 
-	// Read Nonce(12) + EncryptedHeader(32)
-	headerData := make([]byte, 44)
-	if _, err := io.ReadFull(br, headerData); err != nil {
+	// Read Nonce(12)
+	nonce := make([]byte, 12)
+	if _, err := io.ReadFull(br, nonce); err != nil {
 		return &BufferedConn{Conn: conn, br: br}, "", err
 	}
 
-	nonce := headerData[:12]
-	encryptedHeader := headerData[12:44]
+	// Read encrypted header length (uint16) followed by encrypted header
+	lenBuf := make([]byte, 2)
+	if _, err := io.ReadFull(br, lenBuf); err != nil {
+		return &BufferedConn{Conn: conn, br: br}, "", err
+	}
+	encLen := binary.BigEndian.Uint16(lenBuf)
+	encryptedHeader := make([]byte, encLen)
+	if _, err := io.ReadFull(br, encryptedHeader); err != nil {
+		return &BufferedConn{Conn: conn, br: br}, "", err
+	}
 
 	block, _ := aes.NewCipher(h.Key)
 	aesgcm, _ := cipher.NewGCM(block)

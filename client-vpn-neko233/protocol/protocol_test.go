@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"net"
 	"testing"
+	"time"
 )
 
 type MockConn struct {
@@ -14,14 +15,14 @@ type MockConn struct {
 	writeBuf *bytes.Buffer
 }
 
-func (m *MockConn) Read(b []byte) (n int, err error)  { return m.readBuf.Read(b) }
-func (m *MockConn) Write(b []byte) (n int, err error) { return m.writeBuf.Write(b) }
-func (m *MockConn) Close() error                     { return nil }
-func (m *MockConn) LocalAddr() net.Addr              { return nil }
-func (m *MockConn) RemoteAddr() net.Addr             { return nil }
-func (m *MockConn) SetDeadline(t net.Time) error      { return nil }
-func (m *MockConn) SetReadDeadline(t net.Time) error { return nil }
-func (m *MockConn) SetWriteDeadline(t net.Time) error { return nil }
+func (m *MockConn) Read(b []byte) (n int, err error)   { return m.readBuf.Read(b) }
+func (m *MockConn) Write(b []byte) (n int, err error)  { return m.writeBuf.Write(b) }
+func (m *MockConn) Close() error                       { return nil }
+func (m *MockConn) LocalAddr() net.Addr                { return nil }
+func (m *MockConn) RemoteAddr() net.Addr               { return nil }
+func (m *MockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *MockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *MockConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestRealityClientHandshake(t *testing.T) {
 	key := []byte("neko233-vpn-secure-key-32-bytes!")
@@ -44,15 +45,19 @@ func TestRealityClientHandshake(t *testing.T) {
 	}
 
 	data := mockConn.writeBuf.Bytes()
-	
+
 	// Check ShortID
 	if string(data[:len(shortID)]) != shortID {
 		t.Errorf("Expected shortID %s, got %s", shortID, string(data[:len(shortID)]))
 	}
 
-	// Check Encryption
-	nonce := data[len(shortID) : len(shortID)+12]
-	encrypted := data[len(shortID)+12:]
+	// Check Encryption (nonce + uint16(len) + encrypted)
+	base := len(shortID)
+	nonce := data[base : base+12]
+	base += 12
+	encLen := binary.BigEndian.Uint16(data[base : base+2])
+	base += 2
+	encrypted := data[base : base+int(encLen)]
 
 	block, _ := aes.NewCipher(key)
 	aesgcm, _ := cipher.NewGCM(block)

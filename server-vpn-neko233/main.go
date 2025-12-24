@@ -112,30 +112,18 @@ func handleConnection(conn net.Conn, h protocol.Handshaker, destAddr string) {
 func forwardToDest(conn net.Conn, initialData []byte, destAddr string) {
 	destConn, err := net.Dial("tcp", destAddr)
 	if err != nil {
-		return
-	}
-	defer destConn.Close()
-
-	if initialData != nil {
-		destConn.Write(initialData)
-	}
-	
-	errChan := make(chan error, 2)
-	go func() { io.Copy(destConn, conn); errChan <- nil }()
-	go func() { io.Copy(conn, destConn); errChan <- nil }()
-	<-errChan
-}
-
-
-func forwardToDest(conn net.Conn, initialData []byte, destAddr string) {
-	destConn, err := net.Dial("tcp", destAddr)
-	if err != nil {
 		log.Printf("Failed to connect to fallback dest %s: %v", destAddr, err)
 		return
 	}
 	defer destConn.Close()
 
-	destConn.Write(initialData)
+	if len(initialData) > 0 {
+		if _, err := destConn.Write(initialData); err != nil {
+			log.Printf("Failed to write initial data to dest %s: %v", destAddr, err)
+			return
+		}
+	}
+
 	errChan := make(chan error, 2)
 	go func() {
 		_, err := io.Copy(destConn, conn)
