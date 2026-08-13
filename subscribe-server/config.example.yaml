@@ -1,0 +1,21 @@
+server:
+  host: "0.0.0.0"
+  http_port: 23444
+  default_format: "clash"
+  data_dir: "./subscribe-server/data"
+  admin_user: "root"
+  admin_password: "root"
+  admin_origins: "http://127.0.0.1:4173,http://localhost:4173"
+  web_dir: "./admin-web/dist"
+  # Shared secret used only by provider registration requests.
+  provider_registry_token: ""
+  provider_stale_after_secs: 120
+subscriptions:
+  - name: "local"
+    links: []
+    url: ""
+  # Same-host provider feed. Put the real token in config.yaml or env only.
+  - name: "provider-local"
+    links: []
+    url: "http://127.0.0.1:8080/api/v1/nodes"
+    access_token: "change-me-provider-feed-token"

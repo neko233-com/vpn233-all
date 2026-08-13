@@ -651,7 +651,10 @@ func startDNSServer(dns DNSConfig) {
 
 func startWebGUI(addr string) {
 	const sessionCookieName = "vpn233_session"
-	const secretToken = "neko233_token_123456" // In real app, generate this
+	secretToken := os.Getenv("VPN233_LEGACY_SESSION_TOKEN")
+	if secretToken == "" {
+		log.Fatal("VPN233_LEGACY_SESSION_TOKEN is required for the legacy GUI")
+	}
 
 	checkAuth := func(r *http.Request) bool {
 		if globalConfig.WebUsername == "" {

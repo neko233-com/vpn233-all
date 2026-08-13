@@ -119,8 +119,8 @@ func TestVPNAutomation(t *testing.T) {
 		httpClient := &http.Client{Jar: clientJar}
 
 		resp, err := httpClient.PostForm("http://127.0.0.1:8082/login", url.Values{
-			"username": {"admin"},
-			"password": {"password123"},
+			"username": {"root"},
+			"password": {"change-me"},
 		})
 		if err != nil {
 			t.Errorf("Client Web GUI login failed: %v", err)
@@ -137,8 +137,8 @@ func TestVPNAutomation(t *testing.T) {
 		serverJar, _ := cookiejar.New(nil)
 		httpServerClient := &http.Client{Jar: serverJar}
 		resp, err = httpServerClient.PostForm("http://127.0.0.1:8083/login", url.Values{
-			"username": {"admin"},
-			"password": {"adminpassword"},
+			"username": {"root"},
+			"password": {"change-me"},
 		})
 		if err != nil {
 			t.Errorf("Server Web Admin login failed: %v", err)
@@ -179,8 +179,8 @@ func TestVPNAutomation(t *testing.T) {
 
 		// Login first
 		httpClient.PostForm("http://127.0.0.1:8082/login", url.Values{
-			"username": {"admin"},
-			"password": {"password123"},
+			"username": {"root"},
+			"password": {"change-me"},
 		})
 
 		// Test IP-CIDR Proxy
@@ -211,8 +211,8 @@ func TestVPNAutomation(t *testing.T) {
 
 		// Login first
 		httpClient.PostForm("http://127.0.0.1:8082/login", url.Values{
-			"username": {"admin"},
-			"password": {"password123"},
+			"username": {"root"},
+			"password": {"change-me"},
 		})
 
 		// Make a request through proxy to generate a trace
@@ -253,8 +253,8 @@ func TestVPNAutomation(t *testing.T) {
 		clientJar, _ := cookiejar.New(nil)
 		httpClient := &http.Client{Jar: clientJar}
 		httpClient.PostForm("http://127.0.0.1:8082/login", url.Values{
-			"username": {"admin"},
-			"password": {"password123"},
+			"username": {"root"},
+			"password": {"change-me"},
 		})
 
 		resp, err := httpClient.Get("http://127.0.0.1:8082/")
@@ -281,8 +281,8 @@ func TestVPNAutomation(t *testing.T) {
 		serverJar, _ := cookiejar.New(nil)
 		httpServerClient := &http.Client{Jar: serverJar}
 		httpServerClient.PostForm("http://127.0.0.1:8083/login", url.Values{
-			"username": {"admin"},
-			"password": {"adminpassword"},
+			"username": {"root"},
+			"password": {"change-me"},
 		})
 
 		// Check users page for traffic
@@ -316,8 +316,8 @@ func TestVPNAutomation(t *testing.T) {
 
 		// Login
 		httpClient.PostForm("http://127.0.0.1:8082/login", url.Values{
-			"username": {"admin"},
-			"password": {"password123"},
+			"username": {"root"},
+			"password": {"change-me"},
 		})
 
 		// Test Group Switch (Switch 'video' group to 'direct')

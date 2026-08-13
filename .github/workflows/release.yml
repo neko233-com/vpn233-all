@@ -1,96 +1,114 @@
-name: Release
+name: Rust Release
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          go-version: '1.21'
-      - name: Run Tests
-        run: |
-          cd tests
-          go test -v automation_test.go
+          toolchain: "1.85.0"
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: admin-web/package-lock.json
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: npm ci
+        working-directory: admin-web
+      - run: npm run build
+        working-directory: admin-web
 
   build:
-    needs: test
-    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: windows
-            arch: amd64
-            suffix: .exe
-          - os: linux
-            arch: amd64
-            suffix: ""
-          - os: darwin
-            arch: amd64
-            suffix: ""
-          - os: darwin
-            arch: arm64
-            suffix: ""
-
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            exe: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            exe: .exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+            exe: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos-aarch64
+            exe: ""
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          go-version: '1.21'
-
-      - name: Build Client
-        run: |
-          cd client-vpn-neko233
-          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -o ../release/vpn233-client-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }} main.go
-
-      - name: Build Server
-        run: |
-          cd server-vpn-neko233
-          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -o ../release/vpn233-server-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }} main.go
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+          toolchain: "1.85.0"
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
         with:
-          name: vpn233-${{ matrix.os }}-${{ matrix.arch }}
-          path: release/*
+          node-version: 20
+      - run: npm ci
+        working-directory: admin-web
+      - run: npm run build
+        working-directory: admin-web
+      - run: cargo build --release --workspace --target ${{ matrix.target }}
+      - name: Package release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="bundle/vpn233-rust-${{ matrix.platform }}"
+          mkdir -p "$root/bin" "$root/config" "$root/admin-web/dist"
+          for name in vpn233-provider-server vpn233-subscribe-server vpn233-client; do
+            cp "target/${{ matrix.target }}/release/${name}${{ matrix.exe }}" "$root/bin/"
+          done
+          cp admin-web/dist/. "$root/admin-web/dist/" -R
+          cp provider-server/config.example.yaml "$root/config/provider-server.yaml"
+          cp subscribe-server/config.example.yaml "$root/config/subscribe-server.yaml"
+          cp vpn233-client/config.example.yaml "$root/config/vpn233-client.yaml"
+          cp install.sh install.ps1 update.sh update.ps1 "$root/"
+          chmod +x "$root"/*.sh "$root"/bin/*
+          cd bundle
+          if command -v zip >/dev/null 2>&1; then
+            zip -qr "../vpn233-rust-${{ matrix.platform }}.zip" "vpn233-rust-${{ matrix.platform }}"
+          else
+            tar -czf "../vpn233-rust-${{ matrix.platform }}.tar.gz" "vpn233-rust-${{ matrix.platform }}"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vpn233-rust-${{ matrix.platform }}
+          path: vpn233-rust-${{ matrix.platform }}.*
 
-  release:
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: artifacts
-
-      - name: Prepare Release Files
-        run: |
-          mkdir -p release_dist
-          cp -r artifacts/*/* release_dist/
-          # Add config templates and management scripts
-          cp client-vpn-neko233/config.json release_dist/client-config.example.json
-          cp client-vpn-neko233/rules.yaml release_dist/rules.example.yaml
-          cp client-vpn-neko233/vpn233_client.cmd release_dist/vpn233_client.cmd
-          cp client-vpn-neko233/vpn233_client.sh release_dist/vpn233_client.sh
-          cp server-vpn-neko233/config.json release_dist/server-config.example.json
-          cp server-vpn-neko233/vpn233_server.cmd release_dist/vpn233_server.cmd
-          cp server-vpn-neko233/vpn233_server.sh release_dist/vpn233_server.sh
-          chmod +x release_dist/*.sh
-          cd release_dist
-          zip -r ../vpn233-all-platforms.zip .
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+          path: release
+          merge-multiple: true
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
         with:
-          files: vpn233-all-platforms.zip
+          files: release/*
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

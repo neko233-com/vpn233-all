@@ -1,36 +1,66 @@
-# Dependencies
-node_modules/
-.bun/
+# Rust outputs
+/target/
+**/target/
+**/target-*/
+target-publish-*/
+**/.vite/
+*.pdb
 
-release*/
-release-server/
-release-client/
+# Frontend dependencies and build output
+**/node_modules/
+admin-web/dist/
 
-# Build outputs
-dist/
-bin/
-*.exe
-*.exe.stackdump
-
-# Environment variables
+# Local/runtime state
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.local.*
+*.pid
+*.log
+*.session
+data/
+runtime/
+cache/
+secrets/
+config.local.yaml
+config.local.json
+**/config.yaml
+**/config.json
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+*.der
+*.crt
+*.csr
+*.ssh
+deploy-*.ps1
+deploy-*.sh
+remote-*.txt
+*-credentials.txt
+*.credentials
+*.credentials.txt
+*.secret
 
-# IDEs
+# Generated installers and node manifests may contain credentials
+generated/
+release/
+release-*/
+bundle/
+*.zip
+*.tar.gz
+*.install.sh
+*.install.ps1
+node-manifest.json
+links.txt
+
+# Legacy source may contain local migration material
+legacy/**/data/
+legacy/**/config.local.*
+
+# IDE/OS
 .vscode/
 .idea/
-*.swp
-*.swo
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-bun.lockb
-
-# OS files
 .DS_Store
 Thumbs.db

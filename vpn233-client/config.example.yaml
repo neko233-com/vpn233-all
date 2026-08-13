@@ -1,0 +1,10 @@
+listen_addr: "127.0.0.1"
+socks_port: 1080
+http_port: 1081
+web_addr: "127.0.0.1:8082"
+admin_user: "root"
+admin_password: "root"
+upstream_mode: "direct"
+subscription_url: ""
+# Optional no-auth SOCKS5 upstream, e.g. "127.0.0.1:7891" when Mihomo runs locally.
+upstream_socks5: ""

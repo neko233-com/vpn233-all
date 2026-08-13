@@ -337,7 +337,10 @@ func forwardToDest(conn net.Conn, initialData []byte, destAddr string) {
 
 func startWebAdmin(addr string) {
 	const sessionCookieName = "vpn233_admin_session"
-	const secretToken = "neko233_admin_token_654321"
+	secretToken := os.Getenv("VPN233_LEGACY_SESSION_TOKEN")
+	if secretToken == "" {
+		log.Fatal("VPN233_LEGACY_SESSION_TOKEN is required for the legacy GUI")
+	}
 
 	checkAuth := func(r *http.Request) bool {
 		if config.WebUsername == "" {

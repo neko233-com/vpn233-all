@@ -1,18 +1,7 @@
 @echo off
-echo [Server] Building for Linux (amd64)...
-set GOOS=linux
-set GOARCH=amd64
-
-mkdir release-server 2>nul
-
-cd server-vpn-neko233
-go build -o ../release-server/vpn233-server main.go
-cd ..
-
-if %ERRORLEVEL% EQU 0 (
-    echo [Server] Build successful: release-server/vpn233-server
-    copy server-vpn-neko233\config.json release-server\config.json
-) else (
-    echo [Server] Build failed!
-)
-pause
+setlocal
+cargo build --release -p vpn233-provider-server -p vpn233-subscribe-server || exit /b 1
+if not exist generated mkdir generated
+copy /Y target\release\vpn233-provider-server.exe generated\vpn233-provider-server.exe
+copy /Y target\release\vpn233-subscribe-server.exe generated\vpn233-subscribe-server.exe
+echo Built the Rust provider and subscribe services. Cross-platform release bundles are produced by GitHub Actions.

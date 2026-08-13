@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "provider-server",
+    "subscribe-server",
+    "vpn233-client",
+    "vpn233-core-lib-rust",
+]
+
+[workspace.package]
+edition = "2021"
+version = "2.0.0"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1"
+argon2 = "0.5"
+axum = "0.8"
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+rand_core = { version = "0.6", features = ["getrandom"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }

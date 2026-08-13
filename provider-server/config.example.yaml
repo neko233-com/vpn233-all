@@ -1,0 +1,26 @@
+listen_addr: "0.0.0.0"
+listen_port: 8080
+admin_user: "root"
+admin_password: "root"
+default_node_ip: "auto"
+default_port_base: 10000
+# Required for the private node feed consumed by subscribe-server.
+provider_access_token: "change-me-provider-feed-token"
+# Optional pinned Mihomo asset used by deployment tooling. Leave empty only when Mihomo is managed separately.
+mihomo_url: "https://github.com/MetaCubeX/mihomo/releases/latest/download/mihomo-linux-amd64-compatible-v1.gz"
+mihomo_sha256: ""
+subscribe_verify_token: ""
+# Real provider links are kept in the untracked config.yaml or an environment-managed file.
+# node_links:
+#   - "vless://uuid@example.invalid:443?security=reality&type=tcp&pbk=public-key&sid=short-id&sni=example.invalid&fp=chrome&flow=xtls-rprx-vision#provider"
+node_links: []
+# Optional: register this provider with a subscribe-server registry.
+# Keep the registry token in an untracked config.yaml or environment variable.
+registry_url: "http://127.0.0.1:23444"
+registry_token: ""
+registry_provider_id: "provider-local-01"
+registry_name: "provider-local"
+heartbeat_interval_secs: 30
+advertise_addresses:
+  - kind: local
+    value: "127.0.0.1"

@@ -1,61 +1,86 @@
-# VPN233 - DIY 高性能安全代理系统
+# VPN233 Rust
 
-VPN233 是一个基于 Go 语言开发的、高度可扩展的 DIY 代理系统。它采用了类似 REALITY 的握手协议，支持 TUN 模式、多用户管理、实时流量监控以及动态路由切换。
+VPN233 Rust is a memory-safe rewrite of the VPN233 provider, subscription, and client services.
 
-## 目的
-本项目旨在提供一个轻量级、安全且易于二次开发的代理解决方案。通过 DIY 协议握手，规避常见的流量特征识别，同时提供完善的运营监控界面，方便个人或小团队管理代理资源。
+The workspace contains the three runtime services requested by the project:
 
-## 技术架构
-- **核心协议**: 基于 AES-GCM 加密的自定义握手协议，支持 ShortID 验证和伪装目标转发（REALITY 风格）。
-- **客户端**:
-  - **多入站支持**: SOCKS5, HTTP, TUN 模式。
-  - **分流引擎**: 基于域名、IP-CIDR 的规则分流，支持规则分组和动态切换。
-  - **Web GUI**: 实时查看流量、连接、路由追踪及配置管理。
-- **服务端**:
-  - **多用户管理**: 基于本地 JSON 文件的持久化用户数据库。
-  - **流量统计**: 每日流量明细记录，支持按用户查看。
-  - **Web Admin**: 完善的后台管理界面，支持连接控制和日志审计。
-- **日志系统**: 支持滚动日志（Log Rotation），防止日志文件无限增长。
+- `provider-server`: authenticated provider API and `.sh` / `.ps1` node installers.
+- `subscribe-server`: local/remote subscription aggregation, password-protected Clash/Mihomo output, token quotas with calendar/creation-day reset cycles, expiry and renewal APIs, and the embedded admin API.
+- `vpn233-client`: local SOCKS5 and HTTP proxy entry points with connection and byte counters.
 
-## 环境依赖和版本要求
-- **Go**: 1.21 或更高版本。
-- **操作系统**: 
-  - **Windows**: 支持所有功能（包括 TUN 模式，需管理员权限）。
-  - **Linux**: 支持所有功能（TUN 模式需 root 权限）。
-  - **macOS**: 支持所有功能。
-- **依赖库**: 仅使用少量核心库（如 `google/gopacket` 用于 TUN 模式处理）。
+Shared Clash/Mihomo-compatible models and protocol extension points live in `vpn233-core-lib-rust`. The `admin-web` directory is the Vite/React control room served by `subscribe-server` in production.
 
-## 如何使用
+## Security defaults
 
-### 1. 快速启动服务端
+- The default administrator is `root` / `root` for first boot only.
+- Set `VPN233_ADMIN_USER` and `VPN233_ADMIN_PASSWORD` or change the YAML values before exposing a service publicly.
+- Subscription access requires both a token and its separate password. Passwords are stored as Argon2id hashes.
+- Real configuration files, runtime data, generated installers, bundles, and secrets are ignored by Git. Do not commit `config.yaml`, service-unit overrides, SSH material, or exported subscription links.
+
+## Build
+
+Requirements: Rust 1.85 or newer and Node.js 20 or newer for the admin web build.
+
 ```bash
-cd server-vpn-neko233
-# 修改 config.json 配置你的端口和用户
-go run main.go -c config.json
-```
-访问 `http://127.0.0.1:8083` 进入管理后台。
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release --workspace
 
-### 2. 快速启动客户端
+cd admin-web
+npm ci
+npm run build
+```
+
+On Windows, `install.ps1` installs a release bundle's prebuilt `bin/` files when available, or builds all Rust services from source. On Linux/macOS, use `install.sh`. Both scripts support `update` to install a verified release bundle or a locally supplied offline bundle. The installers also copy the bundled `admin-web/dist` static files without touching existing configuration or runtime data.
+
+## Local services
+
+Copy the relevant `config.example.yaml` to an untracked `config.yaml` and adjust the ports and data paths.
+
 ```bash
-cd client-vpn-neko233
-# 修改 config.json 配置服务端的地址和 UUID
-go run main.go -c config.json
+VPN233_CONFIG=provider-server/config.yaml \
+  ./target/release/vpn233-provider-server
+
+VPN233_CONFIG=subscribe-server/config.yaml \
+  ./target/release/vpn233-subscribe-server
+
+VPN233_CONFIG=vpn233-client/config.yaml \
+  ./target/release/vpn233-client
 ```
-访问 `http://127.0.0.1:8082` 进入控制面板。
 
-### 3. 编译发布
-使用根目录下的脚本进行跨平台编译：
-- `client-打包-windows-macos-linux.cmd`
-- `server-打包-linux.cmd`
+Default local endpoints:
 
-## 核心功能说明
-- **连接控制**: 在 Web 界面可以实时断开指定的异常连接。
-- **动态切换**: 客户端支持在多个备选代理服务器之间一键切换，支持对特定规则组（如 YouTube）动态更改出站策略。
-- **滚动日志**: 系统会自动管理日志文件大小，确保长期运行的稳定性。
+| Service | Endpoint |
+| --- | --- |
+| Provider | `http://127.0.0.1:8080/api/v1/health` |
+| Subscribe | `http://127.0.0.1:23444/` |
+| Client | `http://127.0.0.1:8082/api/v1/health` |
 
-## 自动化测试
-本项目包含完善的集成测试，验证代理有效性、分流规则、Web 认证及流量统计：
-```bash
-cd tests
-go test -v automation_test.go
-```
+The subscription server exposes `/sub/c?token=...&password=...` for Clash/Mihomo YAML and `/sub/links?token=...&password=...` for raw links. The admin API uses Basic Auth with the configured administrator.
+
+### Access policy lifecycle
+
+Subscription access is intentionally separate from billing, orders, and the account system. Those systems can create or renew a token through the authenticated admin API and attach an optional `other_uid` for external reconciliation.
+
+- `quota_period`: `lifetime`, `calendar_month`, `monthly_from_creation`, `weekly`, or `daily`.
+- `duration`: `seven_days`, `one_month`, or `one_year` when creating or renewing a token. An explicit `expires_at` timestamp takes precedence.
+- `POST /api/admin/tokens/{token}/renew` renews access and can also change the quota period, quota limit, or `other_uid`.
+- `POST /api/admin/tokens/{token}/reset` clears the current period's usage immediately.
+- Expired tokens are automatically revoked and marked `expired`; their records remain for audit and later renewal rather than being physically deleted.
+
+When `provider_registry_token` is configured, a provider can self-register with `registry_url`, send heartbeats, and publish its domain/IP/local addresses and node links. Registered providers are merged into subscriptions while enabled and fresh; `/sub/base64` provides a Base64 link feed for clients that expect that format. The registry token and provider heartbeat tokens are never returned by the admin API.
+
+## Release bundles
+
+Tag a commit with `vX.Y.Z` to run the GitHub Actions release workflow. It builds the provider, subscribe server, client, and admin UI for Linux, Windows, and macOS, then publishes platform bundles containing example configs and the shell/PowerShell installers.
+
+For an offline update, set `VPN233_UPDATE_BUNDLE` to a local bundle path. For remote updates, optionally set `VPN233_UPDATE_URLS` to a `|`-separated list of trusted URLs and `VPN233_UPDATE_SHA256` to the expected SHA-256 digest.
+
+## Mihomo scope
+
+The Rust core library emits compatible Clash/Mihomo configuration and provides a `CustomProtocol` registry for extensions. It is the stable Rust boundary for future protocol work. Mihomo's complete runtime is not currently available as a stable Rust library, so platform-specific TUN, kernel routing, and transport execution remain an explicitly pinned external Mihomo boundary. The client only enables that boundary when configured; it does not claim unimplemented Rust transports are complete.
+
+## Legacy source
+
+The former Go implementation is retained under `legacy/go-v1/` for migration and rollback reference only. It is not built by the workspace, release workflow, or installation scripts.

@@ -1,20 +1,11 @@
 @echo off
-echo Running tests in submodules...
-for /d %%D in (*) do (
-  if exist "%%D\go.mod" (
-    echo Testing %%D...
-    pushd %%D
-    go test ./... || (
-      echo Tests failed in %%D
-      popd
-      exit /b 1
-    )
-    popd
-  )
-)
-echo All tests passed.
-echo Running packaging scripts...
-call client-打包-windows-macos-linux.cmd
-call server-打包-linux.cmd
-echo Build and packaging finished.
-pause
+setlocal
+cargo fmt --all -- --check || exit /b 1
+cargo clippy --workspace --all-targets -- -D warnings || exit /b 1
+cargo test --workspace || exit /b 1
+pushd admin-web
+call npm.cmd ci || exit /b 1
+call npm.cmd run build || exit /b 1
+popd
+cargo build --release --workspace || exit /b 1
+echo Rust workspace and admin web build passed.

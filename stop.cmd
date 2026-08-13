@@ -1,9 +1,5 @@
 @echo off
-echo Stopping VPN233 System...
-
-taskkill /F /IM main.exe /T 2>nul
-taskkill /F /FI "WINDOWTITLE eq VPN233-Server" /T 2>nul
-taskkill /F /FI "WINDOWTITLE eq VPN233-Client" /T 2>nul
-
-echo VPN233 stopped.
-pause
+taskkill /IM vpn233-provider-server.exe /T /F 2>nul
+taskkill /IM vpn233-subscribe-server.exe /T /F 2>nul
+taskkill /IM vpn233-client.exe /T /F 2>nul
+echo VPN233 Rust services stopped.
