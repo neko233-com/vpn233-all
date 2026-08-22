@@ -12,6 +12,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use clap::{Parser, Subcommand};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -79,6 +80,91 @@ struct ServerConfig {
     provider_registry_token: String,
     #[serde(default = "default_provider_stale_after_secs")]
     provider_stale_after_secs: u64,
+}
+
+const ADMIN_JWT_TTL_SECS: u64 = 365 * 24 * 60 * 60;
+const SUBSCRIPTION_JWT_TTL_SECS: u64 = 10 * 365 * 24 * 60 * 60;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AdminClaims {
+    sub: String,
+    iat: u64,
+    exp: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct SubscriptionClaims {
+    sub: String,
+    token: String,
+    iat: u64,
+    exp: u64,
+}
+
+fn admin_jwt_secret(config: &ServerConfig) -> Vec<u8> {
+    format!(
+        "vpn233-admin-jwt-v1:{}:{}",
+        config.admin_user, config.admin_password
+    )
+    .into_bytes()
+}
+
+fn issue_admin_jwt(config: &ServerConfig, now: u64) -> Result<String, jsonwebtoken::errors::Error> {
+    let claims = AdminClaims {
+        sub: config.admin_user.clone(),
+        iat: now,
+        exp: now.saturating_add(ADMIN_JWT_TTL_SECS),
+    };
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(&admin_jwt_secret(config)),
+    )
+}
+
+fn verify_admin_jwt(config: &ServerConfig, token: &str) -> bool {
+    let validation = Validation::new(Algorithm::HS256);
+    decode::<AdminClaims>(
+        token,
+        &DecodingKey::from_secret(&admin_jwt_secret(config)),
+        &validation,
+    )
+    .is_ok_and(|data| data.claims.sub == config.admin_user)
+}
+
+fn subscription_jwt_secret(config: &ServerConfig) -> Vec<u8> {
+    format!(
+        "vpn233-subscription-link-v1:{}:{}",
+        config.admin_user, config.admin_password
+    )
+    .into_bytes()
+}
+
+fn issue_subscription_jwt(
+    config: &ServerConfig,
+    token: &str,
+    created_at: u64,
+) -> Result<String, jsonwebtoken::errors::Error> {
+    let claims = SubscriptionClaims {
+        sub: "vpn233-subscription".into(),
+        token: token.into(),
+        iat: created_at,
+        exp: created_at.saturating_add(SUBSCRIPTION_JWT_TTL_SECS),
+    };
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(&subscription_jwt_secret(config)),
+    )
+}
+
+fn verify_subscription_jwt(config: &ServerConfig, token: &str, access_token: &str) -> bool {
+    let validation = Validation::new(Algorithm::HS256);
+    decode::<SubscriptionClaims>(
+        access_token,
+        &DecodingKey::from_secret(&subscription_jwt_secret(config)),
+        &validation,
+    )
+    .is_ok_and(|data| data.claims.sub == "vpn233-subscription" && data.claims.token == token)
 }
 
 fn default_host() -> String {
@@ -366,6 +452,7 @@ async fn main() -> Result<()> {
         .route("/sub/c/{name}", get(subscription_clash_named))
         .route("/sub/links", get(subscription_links))
         .route("/sub/base64", get(subscription_base64))
+        .route("/api/auth/login", post(admin_login))
         .route("/api/status", get(status))
         .route("/api/nodes", get(nodes))
         .route("/api/refresh", get(refresh))
@@ -413,6 +500,10 @@ async fn main() -> Result<()> {
         .route("/api/admin/tokens/{token}/renew", post(admin_renew_token))
         .route("/api/admin/tokens/{token}/reset", post(admin_reset_token))
         .route("/api/admin/tokens/{token}/rotate", post(admin_rotate_token))
+        .route(
+            "/api/admin/tokens/{token}/link",
+            post(admin_subscription_link),
+        )
         .fallback_service(tower_http::services::ServeDir::new(web_dir))
         .layer(cors)
         .with_state(state.clone());
@@ -659,6 +750,9 @@ async fn admin_authorized(state: &AppState, headers: &HeaderMap) -> bool {
     else {
         return false;
     };
+    if let Some(token) = value.strip_prefix("Bearer ") {
+        return verify_admin_jwt(&config.server, token.trim());
+    }
     let Some(encoded) = value.strip_prefix("Basic ") else {
         return false;
     };
@@ -975,6 +1069,12 @@ async fn token_allowed(
         })
         .or_else(|| basic.as_ref().map(|(token, _)| token.clone()));
     let token = candidate?;
+    let access_token = query.get("access_token").cloned().or_else(|| {
+        headers
+            .get("x-access-jwt")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+    });
     let password = query
         .get("password")
         .cloned()
@@ -985,7 +1085,15 @@ async fn token_allowed(
                 .map(str::to_owned)
         })
         .or_else(|| basic.map(|(_, password)| password));
-    let password = password?;
+    if access_token.is_none() && password.is_none() {
+        return None;
+    }
+    let jwt_authorized = if let Some(access_token) = access_token.as_deref() {
+        let config = state.config.read().await;
+        verify_subscription_jwt(&config.server, &token, access_token)
+    } else {
+        false
+    };
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -997,7 +1105,10 @@ async fn token_allowed(
         (
             record.enabled
                 && record.expires_at.is_none_or(|expires| expires > now)
-                && verify_password(&password, &record.password_salt, &record.password_hash),
+                && (jwt_authorized
+                    || password.as_deref().is_some_and(|password| {
+                        verify_password(password, &record.password_salt, &record.password_hash)
+                    })),
             record.account_id.clone(),
         )
     } else {
@@ -1141,7 +1252,7 @@ async fn subscription_links(
         &token,
         body,
         "text/plain; charset=utf-8",
-        "vsub233.txt",
+        "vpn233.txt",
     )
     .await
 }
@@ -1174,7 +1285,7 @@ async fn subscription_base64(
         &token,
         format!("{}\n", BASE64.encode(body)),
         "text/plain; charset=utf-8",
-        "vsub233.txt",
+        "vpn233.txt",
     )
     .await
 }
@@ -1184,7 +1295,7 @@ fn subscription_filename(query: &HashMap<String, String>) -> String {
         .get("filename")
         .or_else(|| query.get("profile"))
         .map(String::as_str)
-        .unwrap_or("vsub233");
+        .unwrap_or("vpn233");
     let mut name: String = raw
         .trim()
         .chars()
@@ -1198,7 +1309,7 @@ fn subscription_filename(query: &HashMap<String, String>) -> String {
         .collect();
     name = name.trim_matches([' ', '.']).to_owned();
     if name.is_empty() {
-        name = "vsub233".into();
+        name = "vpn233".into();
     }
     if !name.to_ascii_lowercase().ends_with(".yaml") && !name.to_ascii_lowercase().ends_with(".yml")
     {
@@ -1244,6 +1355,33 @@ async fn subscription_response(
         headers.insert("profile-title", value);
     }
     (headers, body).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminLogin {
+    username: String,
+    password: String,
+}
+
+async fn admin_login(State(state): State<AppState>, Json(input): Json<AdminLogin>) -> Response {
+    let config = state.config.read().await;
+    if input.username != config.server.admin_user || input.password != config.server.admin_password
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let now = unix_now();
+    match issue_admin_jwt(&config.server, now) {
+        Ok(token) => Json(json!({
+            "token": token,
+            "user": config.server.admin_user,
+            "expires_at": now.saturating_add(ADMIN_JWT_TTL_SECS),
+        }))
+        .into_response(),
+        Err(error) => {
+            tracing::error!(%error, "admin JWT issuance failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 async fn status(
@@ -2479,6 +2617,43 @@ async fn admin_rotate_token(
     Json(json!({"token": token, "password": password})).into_response()
 }
 
+async fn admin_subscription_link(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !admin_authorized(&state, &headers).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let created_at = {
+        let usage = state.usage.read().await;
+        let Some(record) = usage.tokens.get(&token) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        if !record.enabled
+            || record
+                .expires_at
+                .is_some_and(|expires| expires <= unix_now())
+        {
+            return (StatusCode::CONFLICT, "token is not active").into_response();
+        }
+        record.created_at
+    };
+    let config = state.config.read().await;
+    match issue_subscription_jwt(&config.server, &token, created_at) {
+        Ok(access_token) => Json(json!({
+            "token": token,
+            "access_token": access_token,
+            "filename": "vpn233",
+        }))
+        .into_response(),
+        Err(error) => {
+            tracing::error!(%error, "subscription JWT issuance failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RenewToken {
     #[serde(default)]
@@ -2697,9 +2872,9 @@ fn verify_password(password: &str, _salt: &str, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_months, default_all_group_id, default_legacy_account_id, month_key, parse_link,
-        quota_period_key, refresh_quota, unix_now, CreateToken, QuotaPeriod, TokenView,
-        UsageRecord,
+        add_months, default_all_group_id, default_legacy_account_id, issue_subscription_jwt,
+        month_key, parse_link, quota_period_key, refresh_quota, unix_now, verify_subscription_jwt,
+        CreateToken, QuotaPeriod, ServerConfig, TokenView, UsageRecord,
     };
 
     fn test_record(created_at: u64, quota_period: QuotaPeriod) -> UsageRecord {
@@ -2721,6 +2896,21 @@ mod tests {
             account_id: default_legacy_account_id(),
             group_id: default_all_group_id(),
             label: String::new(),
+        }
+    }
+
+    fn test_server_config() -> ServerConfig {
+        ServerConfig {
+            host: "127.0.0.1".into(),
+            http_port: 23444,
+            default_format: "clash".into(),
+            data_dir: "data".into(),
+            admin_user: "root".into(),
+            admin_password: "secret".into(),
+            admin_origins: String::new(),
+            web_dir: "web".into(),
+            provider_registry_token: String::new(),
+            provider_stale_after_secs: 120,
         }
     }
 
@@ -2769,6 +2959,19 @@ mod tests {
         let view = TokenView::from_pair("demo", &record, unix_now());
         let json = serde_json::to_value(view).expect("token view should serialize");
         assert_eq!(json["other_uid"], json["otherUid"]);
+    }
+
+    #[test]
+    fn subscription_jwt_is_stable_and_scoped_to_one_token() {
+        let config = test_server_config();
+        let first = issue_subscription_jwt(&config, "vpn233", 1_700_000_000).unwrap();
+        let second = issue_subscription_jwt(&config, "vpn233", 1_700_000_000).unwrap();
+        assert_eq!(first, second);
+        assert!(verify_subscription_jwt(&config, "vpn233", &first));
+        assert!(!verify_subscription_jwt(&config, "other-token", &first));
+        let mut changed = config.clone();
+        changed.admin_password = "changed".into();
+        assert!(!verify_subscription_jwt(&changed, "vpn233", &first));
     }
 
     #[test]

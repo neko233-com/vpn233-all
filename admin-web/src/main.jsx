@@ -3,18 +3,18 @@ import { createRoot } from 'react-dom/client'
 import QRCode from 'qrcode'
 import {
   Activity, ArrowUpRight, Boxes, Cable, Check, ChevronDown, CircleAlert, Copy,
-  CircleGauge, Clock3, Download, Gauge, KeyRound, LifeBuoy, Link2, LogOut, Menu,
+  CircleGauge, Clock3, Download, Gauge, KeyRound, Link2, LogOut, Menu,
   Network, Plus, QrCode, RefreshCw, RotateCcw, ScanLine, Server, ServerCog,
-  Settings2, ShieldCheck, SlidersHorizontal, Users, X,
+  ShieldCheck, SlidersHorizontal, Users, X,
 } from 'lucide-react'
 import './styles.css'
 
 const API = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://127.0.0.1:23444' : '')
 const DEFAULT_USER = 'root'
-const DEFAULT_PASSWORD = 'root'
+const DEFAULT_PASSWORD = ''
 const LANGUAGE_KEY = 'vpn233-admin-language'
-const PUBLIC_SUBSCRIPTION_ORIGIN = import.meta.env.VITE_PUBLIC_SUBSCRIPTION_ORIGIN ||
-  (import.meta.env.DEV ? API : 'https://vsub.neko233.com')
+const AUTH_TOKEN_KEY = 'vpn233-admin-jwt'
+const CONFIGURED_SUBSCRIPTION_ORIGIN = import.meta.env.VITE_PUBLIC_SUBSCRIPTION_ORIGIN?.trim()
 
 const copy = {
   zh: {
@@ -24,7 +24,7 @@ const copy = {
     switchLanguage: '切换语言', chinese: '中文', english: 'EN', subscribeOnline: '订阅服务在线',
     subscribeUnavailable: '订阅服务不可用', refresh: '刷新', operations: '运营控制台',
     loginTitle: '运营控制台', loginCopy: '统一管理节点、订阅访问和用量策略。', adminAccount: '管理员账号',
-    adminPassword: '管理员密码', login: '登录控制台', credentialsNote: '凭据只保存在当前浏览器内存中',
+    adminPassword: '管理员密码', login: '登录控制台', credentialsNote: '登录令牌保存在当前浏览器；修改后台密码后自动失效', restoringSession: '正在恢复登录状态…',
     invalidCredentials: '无法验证管理员凭据，请确认订阅服务已启动', overviewCopy: '实时掌握 Provider、订阅访问与用量边界。',
     manageTokens: '管理令牌', deployNode: '部署节点', activeSubscribers: '活跃订阅者', current: '当前',
     subscriptionRequests: '订阅请求', persistedLocally: '本地持久化', trafficThisMonth: '本月流量', measuredUsage: '已记录用量',
@@ -44,12 +44,13 @@ const copy = {
     duration: '有效期套餐', sevenDays: '7 天', oneMonth: '1 个月', oneYear: '1 年', otherUid: '外部 UID（可选）',
     nextReset: '下次刷新', createdAt: '创建时间', renewal: '续期', reset: '刷新用量', renew7: '续期 7 天', renewMonth: '续期 1 个月', renewYear: '续期 1 年',
     expiresAt: '截止时间', expired: '已到期', neverExpires: '不设截止时间', retired: '已清理（保留记录）',
-    profileName: '配置文件名', profileNamePlaceholder: 'vsub233', subscriptionLink: 'Clash 订阅链接', copyLink: '复制链接', generateAndCopy: '生成并复制', copied: '已复制', copyFailed: '复制失败，请手动复制', linkSecurityNote: '链接包含订阅密码，仅在本次创建流程中显示，请妥善保存。', quickCopySecurityNote: '点击后会轮换密码，旧链接立即失效；完整链接只写入当前剪贴板。', quickCopyDone: '订阅链接已生成并复制，旧链接已失效',
+    profileName: '配置文件名', profileNamePlaceholder: 'vpn233', subscriptionLink: 'Clash 订阅链接', copyLink: '复制链接', generateAndCopy: '生成并复制', copied: '已复制', copyFailed: '复制失败，请手动复制', linkSecurityNote: '链接包含订阅密码，仅在本次创建流程中显示，请妥善保存。', quickCopySecurityNote: '固定 vpn233 配置入口；重复复制不会轮换密码，旧配置可继续刷新。', quickCopyDone: 'vpn233 订阅链接已复制',
     create: '创建', cancel: '取消', tokenPlaceholder: 'subscriber-001', passwordPlaceholder: '由订阅者单独持有',
     close: '关闭', tokenCreated: '令牌已创建', tokenDisabled: '令牌已停用', providerDisabled: 'Provider 已停用',
     operationFailed: '操作失败：{message}', readFailed: '读取服务数据失败：{message}',
     moduleReady: '该模块已接入统一控制台数据层，选择刷新以获取最新状态。', moduleWorkspace: '{title} 工作区',
     serviceSummary: '服务端已在线，当前有 {nodes} 个节点和 {tokens} 个访问策略。', refreshData: '刷新数据',
+    subscriptionWorkspaceCopy: '为 Clash / Mihomo 提供同源、受保护的 YAML 订阅入口。', sameOriginDelivery: '同源订阅入口', sameOriginDeliveryCopy: '链接默认使用当前后台域名，避免复制到客户端后跳转到旧主机。', clashImportReady: 'Clash / Mihomo 可用', clashImportReadyCopy: '返回 YAML 配置，包含当前可用 Provider 节点。', subscriptionEndpoint: '订阅地址', providerNodes: 'Provider 节点', activeLinks: '有效链接', endpointPreview: '不会在页面展示订阅密码。',
     trafficCopy: '按令牌查看用量、请求和刷新周期。', trafficUsed: '已使用流量', trafficQuota: '总配额', trafficRequests: '订阅请求', trafficPolicies: '用量策略',
     trafficReset: '刷新用量', trafficResetDone: '用量已刷新', trafficNoData: '暂无用量记录。', nextReset: '下次刷新',
     deploymentsCopy: '查看 Provider、节点数量、地址和最近心跳。', deploymentHealth: '部署健康度', onlineProviders: '在线 Provider', registeredNodes: '已注册节点', providerInventory: 'Provider 清单', nodeInventory: '节点清单',
@@ -65,7 +66,7 @@ const copy = {
     switchLanguage: 'Switch language', chinese: '中文', english: 'EN', subscribeOnline: 'Subscribe online',
     subscribeUnavailable: 'Subscribe unavailable', refresh: 'Refresh', operations: 'Operations console',
     loginTitle: 'Operations console', loginCopy: 'Manage providers, subscription access, and usage policies in one place.',
-    adminAccount: 'Admin account', adminPassword: 'Admin password', login: 'Sign in', credentialsNote: 'Credentials stay in this browser session',
+    adminAccount: 'Admin account', adminPassword: 'Admin password', login: 'Sign in', credentialsNote: 'The login token stays in this browser and expires when the admin password changes', restoringSession: 'Restoring your session…',
     invalidCredentials: 'Could not verify admin credentials. Confirm the subscription service is running.', overviewCopy: 'Monitor providers, subscription access, and usage limits in real time.',
     manageTokens: 'Manage tokens', deployNode: 'Deploy node', activeSubscribers: 'Active subscribers', current: 'Current',
     subscriptionRequests: 'Subscription requests', persistedLocally: 'Persisted locally', trafficThisMonth: 'Traffic this month', measuredUsage: 'Measured usage',
@@ -85,12 +86,13 @@ const copy = {
     duration: 'Access duration', sevenDays: '7 days', oneMonth: '1 month', oneYear: '1 year', otherUid: 'External UID (optional)', nextReset: 'Next reset',
     createdAt: 'Created', renewal: 'Renewal', reset: 'Reset usage', renew7: 'Renew 7 days', renewMonth: 'Renew 1 month', renewYear: 'Renew 1 year',
     expiresAt: 'Expiry', expired: 'Expired', neverExpires: 'No expiry', retired: 'Retired (record kept)',
-    profileName: 'Profile name', profileNamePlaceholder: 'vsub233', subscriptionLink: 'Clash subscription link', copyLink: 'Copy link', generateAndCopy: 'Generate & copy', copied: 'Copied', copyFailed: 'Copy failed. Copy it manually.', linkSecurityNote: 'This link contains the subscription password and is shown only during creation. Store it securely.', quickCopySecurityNote: 'This rotates the password, invalidates the old link, and writes the complete link only to the current clipboard.', quickCopyDone: 'Subscription link generated and copied; the old link is invalid',
+    profileName: 'Profile name', profileNamePlaceholder: 'vpn233', subscriptionLink: 'Clash subscription link', copyLink: 'Copy link', generateAndCopy: 'Generate & copy', copied: 'Copied', copyFailed: 'Copy failed. Copy it manually.', linkSecurityNote: 'This link contains the subscription password and is shown only during creation. Store it securely.', quickCopySecurityNote: 'The vpn233 entry point is stable; copying again does not rotate the password.', quickCopyDone: 'vpn233 subscription link copied',
     create: 'Create', cancel: 'Cancel', tokenPlaceholder: 'subscriber-001', passwordPlaceholder: 'Held separately by the subscriber',
     close: 'Close', tokenCreated: 'Token created', tokenDisabled: 'Token disabled', providerDisabled: 'Provider disabled',
     operationFailed: 'Operation failed: {message}', readFailed: 'Could not read service data: {message}',
     moduleReady: 'This module is connected to the unified console data layer. Refresh for the latest state.', moduleWorkspace: '{title} workspace',
     serviceSummary: 'The service is online with {nodes} nodes and {tokens} access policies.', refreshData: 'Refresh data',
+    subscriptionWorkspaceCopy: 'Provide a same-origin, protected YAML subscription entry point for Clash / Mihomo.', sameOriginDelivery: 'Same-origin subscription', sameOriginDeliveryCopy: 'Links use the current admin origin by default, so clients do not follow a stale host.', clashImportReady: 'Clash / Mihomo ready', clashImportReadyCopy: 'Returns YAML with the currently available Provider nodes.', subscriptionEndpoint: 'Subscription endpoint', providerNodes: 'Provider nodes', activeLinks: 'Active links', endpointPreview: 'The subscription password is never shown here.',
     trafficCopy: 'Review usage, requests, and reset cycles by token.', trafficUsed: 'Used traffic', trafficQuota: 'Total quota', trafficRequests: 'Subscription requests', trafficPolicies: 'Usage policies',
     trafficReset: 'Reset usage', trafficResetDone: 'Usage reset', trafficNoData: 'No usage records yet.', nextReset: 'Next reset',
     deploymentsCopy: 'Review providers, node counts, addresses, and recent heartbeats.', deploymentHealth: 'Deployment health', onlineProviders: 'Online providers', registeredNodes: 'Registered nodes', providerInventory: 'Provider inventory', nodeInventory: 'Node inventory',
@@ -124,10 +126,25 @@ function bytes(value = 0) {
 function pct(used, limit) { return limit ? Math.min(100, Math.round((used / limit) * 100)) : 0 }
 function formatDate(timestamp, language, fallback = '-') { return timestamp ? new Date(timestamp * 1000).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US') : fallback }
 function periodLabel(period, t) { return ({ calendar_month: t('calendarMonth'), monthly_from_creation: t('creationMonth'), weekly: t('weekly'), daily: t('daily'), lifetime: t('lifetime') }[period] || period) }
+function subscriptionOrigin() {
+  if (CONFIGURED_SUBSCRIPTION_ORIGIN) return CONFIGURED_SUBSCRIPTION_ORIGIN.replace(/\/+$/, '')
+  if (import.meta.env.DEV && API) return API.replace(/\/+$/, '')
+  if (globalThis.location?.origin && globalThis.location.origin !== 'null') return globalThis.location.origin
+  return API || 'http://127.0.0.1:23444'
+}
+function subscriptionUrl(token, password, filename = 'vpn233', accessToken) {
+  const url = new URL('/sub/c', subscriptionOrigin())
+  const params = { token, filename }
+  if (accessToken) params.access_token = accessToken
+  else if (password) params.password = password
+  url.search = new URLSearchParams(params).toString()
+  return url.toString()
+}
 
 async function request(path, options = {}, auth) {
   const headers = new Headers(options.headers || {})
-  if (auth) headers.set('Authorization', `Basic ${globalThis.btoa(`${auth.user}:${auth.password}`)}`)
+  if (auth?.token) headers.set('Authorization', `Bearer ${auth.token}`)
+  else if (auth) headers.set('Authorization', `Basic ${globalThis.btoa(`${auth.user}:${auth.password}`)}`)
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const response = await fetch(`${API}${path}`, { ...options, headers })
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
@@ -148,8 +165,10 @@ function Login({ onLogin, language, changeLanguage, t }) {
   const [error, setError] = useState('')
   const submit = async (event) => {
     event.preventDefault(); setError('')
-    const auth = { user, password }
-    try { await request('/api/status', {}, auth); onLogin(auth) } catch { setError(t('invalidCredentials')) }
+    try {
+      const data = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: user, password }) })
+      onLogin({ user: data.user || user, token: data.token })
+    } catch { setError(t('invalidCredentials')) }
   }
   return <main className="login-shell">
     <div className="login-language"><LanguageToggle language={language} changeLanguage={changeLanguage} t={t} /></div>
@@ -171,10 +190,20 @@ function Login({ onLogin, language, changeLanguage, t }) {
 
 function App() {
   const [auth, setAuth] = useState(null)
+  const [restoring, setRestoring] = useState(true)
   const { language, changeLanguage, t } = useLanguage()
+  useEffect(() => {
+    const token = globalThis.localStorage?.getItem(AUTH_TOKEN_KEY)
+    if (!token) { setRestoring(false); return }
+    const storedAuth = { user: DEFAULT_USER, token }
+    request('/api/status', {}, storedAuth).then(() => setAuth(storedAuth)).catch(() => globalThis.localStorage?.removeItem(AUTH_TOKEN_KEY)).finally(() => setRestoring(false))
+  }, [])
+  const onLogin = nextAuth => { if (nextAuth.token) globalThis.localStorage?.setItem(AUTH_TOKEN_KEY, nextAuth.token); setAuth(nextAuth) }
+  const onLogout = () => { globalThis.localStorage?.removeItem(AUTH_TOKEN_KEY); setAuth(null) }
+  if (restoring) return <main className="login-shell"><section className="login-panel session-panel"><div className="brand-mark"><span><Network size={18} /></span> VPN233</div><p className="eyebrow">{t('operations')}</p><h1>{t('restoringSession')}</h1></section></main>
   return auth
-    ? <Dashboard auth={auth} onLogout={() => setAuth(null)} language={language} changeLanguage={changeLanguage} t={t} />
-    : <Login onLogin={setAuth} language={language} changeLanguage={changeLanguage} t={t} />
+    ? <Dashboard auth={auth} onLogout={onLogout} language={language} changeLanguage={changeLanguage} t={t} />
+    : <Login onLogin={onLogin} language={language} changeLanguage={changeLanguage} t={t} />
 }
 
 function Dashboard({ auth, onLogout, language, changeLanguage, t }) {
@@ -199,7 +228,7 @@ function Dashboard({ auth, onLogout, language, changeLanguage, t }) {
       setStatus(nextStatus); setNodes(nextNodes); setTokens(normalizedTokens); setProviders(nextProviders.providers || []); setAccounts(nextAccounts.accounts || []); setGroups(nextGroups.groups || [])
     } catch (error) { setToast(t('readFailed', { message: error.message })) } finally { setRefreshing(false) }
   }
-  useEffect(() => { void load() }, [auth.user, auth.password])
+  useEffect(() => { void load() }, [auth.user, auth.password, auth.token])
   useEffect(() => { if (!toast) return undefined; const id = setTimeout(() => setToast(''), 3000); return () => clearTimeout(id) }, [toast])
   const totalUsed = tokens.reduce((sum, token) => sum + token.used_bytes, 0)
   const totalLimit = tokens.reduce((sum, token) => sum + token.limit_bytes, 0)
@@ -217,12 +246,12 @@ function Dashboard({ auth, onLogout, language, changeLanguage, t }) {
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
       <div className="brand"><span className="brand-symbol"><Network size={17} /></span><span>VPN233</span><span className="brand-version">v2</span></div>
       <div className="nav-block"><p className="nav-label">{t('workspace')}</p>{nav.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${section === id ? 'active' : ''}`} onClick={() => selectSection(id)}><Icon size={17} /><span>{label}</span>{id === 'tokens' && <span className="nav-count">{activeTokens}</span>}</button>)}</div>
-      <div className="sidebar-bottom"><p className="nav-label">{t('system')}</p><button className="nav-item"><Settings2 size={17} /> <span>{t('settings')}</span></button><button className="nav-item"><LifeBuoy size={17} /> <span>{t('support')}</span></button><div className="operator"><span className="avatar">R</span><span><strong>root</strong><small>{t('administrator')}</small></span><button className="icon-button" title={t('logout')} onClick={onLogout}><LogOut size={15} /></button></div></div>
+      <div className="sidebar-bottom"><p className="nav-label">{t('system')}</p><div className="system-status"><span className={`pulse ${status?.ok ? 'online' : 'offline'}`} /> {status?.ok ? t('subscribeOnline') : t('subscribeUnavailable')}</div><div className="operator"><span className="avatar">R</span><span><strong>root</strong><small>{t('administrator')}</small></span><button className="icon-button" title={t('logout')} onClick={onLogout}><LogOut size={15} /></button></div></div>
     </aside>
     <div className="content-shell">
       <header className="topbar"><button className="mobile-menu icon-button" onClick={() => setMobileNav(!mobileNav)} title={mobileNav ? t('closeNavigation') : t('openNavigation')}><Menu size={19} /></button><div><span className="crumb-muted">{t('workspace')} / </span><strong>{currentLabel}</strong></div><div className="top-actions"><span className="service-state"><span className={`pulse ${status?.ok ? 'online' : 'offline'}`} /> {status?.ok ? t('subscribeOnline') : t('subscribeUnavailable')}</span><LanguageToggle language={language} changeLanguage={changeLanguage} t={t} /><button className="icon-button" title={t('refresh')} onClick={load}><RefreshCw className={refreshing ? 'spin' : ''} size={17} /></button><button className="avatar avatar-top" title={t('administrator')}>R</button></div></header>
        <main className="main-content">
-         {section === 'overview' ? <Overview nodes={nodes} providers={providers} tokens={tokens} totalUsed={totalUsed} totalLimit={totalLimit} activeTokens={activeTokens} auth={auth} onChanged={load} onToast={setToast} onDeploy={() => setSection('deployments')} onTokens={() => setSection('tokens')} onProviders={() => setSection('nodes')} language={language} t={t} /> : section === 'nodes' ? <Providers providers={providers} auth={auth} onChanged={load} onToast={setToast} language={language} t={t} /> : section === 'accounts' ? <Accounts accounts={accounts} groups={groups} auth={auth} onChanged={load} onToast={setToast} language={language} t={t} /> : section === 'groups' ? <Groups groups={groups} nodes={nodes} auth={auth} onChanged={load} onToast={setToast} language={language} t={t} /> : section === 'tokens' ? <Tokens tokens={tokens} auth={auth} onChanged={load} onToast={setToast} t={t} /> : section === 'traffic' ? <Traffic tokens={tokens} auth={auth} onChanged={load} onToast={setToast} language={language} t={t} /> : section === 'deployments' ? <Deployments nodes={nodes} providers={providers} onRefresh={load} language={language} t={t} /> : <SectionPlaceholder title={currentLabel} nodes={nodes} tokens={tokens} onRefresh={load} t={t} />}
+         {section === 'overview' ? <Overview nodes={nodes} providers={providers} tokens={tokens} totalUsed={totalUsed} totalLimit={totalLimit} activeTokens={activeTokens} auth={auth} onChanged={load} onToast={setToast} onDeploy={() => setSection('deployments')} onTokens={() => setSection('tokens')} onProviders={() => setSection('nodes')} language={language} t={t} /> : section === 'nodes' ? <Providers providers={providers} auth={auth} onChanged={load} onToast={setToast} language={language} t={t} /> : section === 'accounts' ? <Accounts accounts={accounts} groups={groups} auth={auth} onChanged={load} onToast={setToast} language={language} t={t} /> : section === 'groups' ? <Groups groups={groups} nodes={nodes} auth={auth} onChanged={load} onToast={setToast} language={language} t={t} /> : section === 'subscriptions' ? <Subscriptions nodes={nodes} tokens={tokens} auth={auth} onChanged={load} onToast={setToast} onTokens={() => setSection('tokens')} language={language} t={t} /> : section === 'tokens' ? <Tokens tokens={tokens} auth={auth} onChanged={load} onToast={setToast} t={t} /> : section === 'traffic' ? <Traffic tokens={tokens} auth={auth} onChanged={load} onToast={setToast} language={language} t={t} /> : section === 'deployments' ? <Deployments nodes={nodes} providers={providers} onRefresh={load} language={language} t={t} /> : <SectionPlaceholder title={currentLabel} nodes={nodes} tokens={tokens} onRefresh={load} t={t} />}
       </main>
     </div>
     {toast && <div className="toast"><CircleAlert size={16} /> {toast}<button className="toast-close" title={t('close')} onClick={() => setToast('')}><X size={14} /></button></div>}
@@ -248,6 +277,12 @@ function Tokens({ tokens, auth, onChanged, onToast, language, t }) {
   return <><PageTitle title={t('accessTokens')} copyText={t('tokenUsagePolicy')} action={<button className="primary-button" onClick={() => setOpen(true)}><Plus size={16} /> {t('createToken')}</button>} /><section className="panel token-panel full"><div className="token-toolbar"><div className="filter-button"><SlidersHorizontal size={15} /> {t('allTokens')} <ChevronDown size={14} /></div><span>{t('tokenRecords', { count: tokens.length })}</span></div><TokenTable tokens={tokens} full auth={auth} onChanged={onChanged} onToast={onToast} language={language} t={t} /></section>{open && <CreateToken auth={auth} onClose={() => setOpen(false)} onCreated={() => { onChanged(); onToast(t('tokenCreated')) }} onToast={onToast} t={t} />}</>
 }
 
+function Subscriptions({ nodes, tokens, auth, onChanged, onToast, onTokens, language, t }) {
+  const activeLinks = tokens.filter(token => token.enabled).length
+  const origin = subscriptionOrigin()
+  return <><PageTitle title={t('subscriptions')} copyText={t('subscriptionWorkspaceCopy')} action={<button className="primary-button" onClick={onTokens}><KeyRound size={16} /> {t('manageTokens')}</button>} /><div className="subscription-grid"><section className="panel subscription-panel"><div className="panel-heading"><div><h2>{t('sameOriginDelivery')}</h2><p>{t('sameOriginDeliveryCopy')}</p></div><span className="status-badge good"><i /> {t('online')}</span></div><div className="subscription-origin"><span>{t('subscriptionEndpoint')}</span><code>{origin}/sub/c?token=…&amp;password=…</code></div><div className="subscription-checklist"><div><Check size={15} /><span><strong>{t('clashImportReady')}</strong><small>{t('clashImportReadyCopy')}</small></span></div><div><Check size={15} /><span><strong>{t('providerNodes')}</strong><small>{nodes.length} {t('nodes').toLowerCase()} · {t('endpointPreview')}</small></span></div></div></section><section className="panel subscription-panel"><div className="panel-heading"><div><h2>{t('activeLinks')}</h2><p>{t('tokenUsageStatus')}</p></div><Cable size={18} className="subscription-icon" /></div><strong className="subscription-count">{activeLinks.toLocaleString()}</strong><span className="subscription-count-label">{t('active')}</span><div className="usage-bar large"><span style={{ width: `${tokens.length ? Math.round((activeLinks / tokens.length) * 100) : 0}%` }} /></div></section></div><section className="panel token-panel full"><div className="panel-heading"><div><h2>{t('subscriptionLink')}</h2><p>{t('quickCopySecurityNote')}</p></div><button className="secondary-button" onClick={onTokens}><SlidersHorizontal size={15} /> {t('accessTokens')}</button></div><TokenTable tokens={tokens} quickCopy auth={auth} onChanged={onChanged} onToast={onToast} language={language} t={t} /></section></>
+}
+
 function Accounts({ accounts, groups, auth, onChanged, onToast, language, t }) {
   const [createOpen, setCreateOpen] = useState(false)
   const [expanded, setExpanded] = useState(null)
@@ -258,12 +293,11 @@ function Accounts({ accounts, groups, auth, onChanged, onToast, language, t }) {
 
 function AccountRow({ account, groups, expanded, onToggle, onCreateLink, onEdit, auth, onChanged, onToast, language, t }) {
   const [links, setLinks] = useState([])
-  const [open, setOpen] = useState(false)
   const loadLinks = async () => {
     try { const data = await request(`/api/admin/accounts/${encodeURIComponent(account.account_id)}/links`, {}, auth); setLinks(data.links || []) } catch (error) { onToast(t('operationFailed', { message: error.message })) }
   }
   useEffect(() => { if (expanded) void loadLinks() }, [expanded])
-  const toggle = () => { onToggle(); setOpen(!open); if (!expanded) void loadLinks() }
+  const toggle = () => { onToggle(); if (!expanded) void loadLinks() }
   const setEnabled = async enabled => {
     try { await request(`/api/admin/accounts/${encodeURIComponent(account.account_id)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, auth); onChanged(); onToast(enabled ? t('accountEnabled') : t('accountDisabled')) } catch (error) { onToast(t('operationFailed', { message: error.message })) }
   }
@@ -282,14 +316,20 @@ function LinkRow({ link, groups, auth, onChanged, onToast, language, t }) {
   const [generated, setGenerated] = useState('')
   const [qrDataUrl, setQrDataUrl] = useState('')
   const [rotating, setRotating] = useState(false)
-  const buildUrl = password => { const url = new URL('/sub/c', PUBLIC_SUBSCRIPTION_ORIGIN); url.search = new URLSearchParams({ token: link.token, password, filename: link.label || 'vsub233' }).toString(); return url.toString() }
-  const rotate = async () => {
+  const copyStableLink = async () => {
     setRotating(true)
-    try { const data = await request(`/api/admin/accounts/${encodeURIComponent(link.account_id)}/links/${encodeURIComponent(link.token)}/rotate`, { method: 'POST' }, auth); const url = buildUrl(data.password); setGenerated(url); setQrDataUrl(await QRCode.toDataURL(url, { width: 240, margin: 2 })); onChanged(); onToast(t('passwordRotated')) } catch (error) { onToast(t('operationFailed', { message: error.message })) } finally { setRotating(false) }
+    try {
+      const data = await request(`/api/admin/tokens/${encodeURIComponent(link.token)}/link`, { method: 'POST' }, auth)
+      const url = subscriptionUrl(data.token || link.token, undefined, data.filename || 'vpn233', data.access_token)
+      setGenerated(url)
+      setQrDataUrl(await QRCode.toDataURL(url, { width: 240, margin: 2 }))
+      onChanged()
+      onToast(t('copied'))
+    } catch (error) { onToast(t('operationFailed', { message: error.message })) } finally { setRotating(false) }
   }
   const disable = async () => { try { await request(`/api/admin/accounts/${encodeURIComponent(link.account_id)}/links/${encodeURIComponent(link.token)}`, { method: 'DELETE' }, auth); onChanged(); onToast(t('linkDisabled')) } catch (error) { onToast(t('operationFailed', { message: error.message })) } }
   const copy = async () => { try { await navigator.clipboard.writeText(generated); onToast(t('copied')) } catch { onToast(t('copyFailed')) } }
-  return <div className="link-card"><div className="link-card-main"><span className="token-key"><Link2 size={14} /></span><div className="node-main"><strong>{link.label || link.token}</strong><small>{link.token} · {groups.find(group => group.group_id === link.group_id)?.name || link.group_id} · {bytes(link.used_bytes)} / {bytes(link.limit_bytes)}</small></div><span className={`status-badge ${link.enabled ? 'good' : 'off'}`}><i /> {link.enabled ? t('active') : t('disabled')}</span></div><div className="link-card-actions"><button className="table-action" onClick={rotate} disabled={rotating}><RefreshCw size={12} className={rotating ? 'spin' : ''} /> {t('rotatePassword')}</button><button className="table-action" onClick={disable} disabled={!link.enabled}>{t('disable')}</button></div>{generated && <div className="generated-link-panel compact-generated"><div className="generated-link-row"><input className="generated-link-input" readOnly value={generated} aria-label={t('subscriptionLink')} /><button type="button" className="secondary-button" onClick={copy}><Copy size={14} /> {t('copyLink')}</button></div><div className="inline-qr">{qrDataUrl && <img src={qrDataUrl} alt={t('qrCodeTitle')} />}</div></div>}</div>
+  return <div className="link-card"><div className="link-card-main"><span className="token-key"><Link2 size={14} /></span><div className="node-main"><strong>{link.label || link.token}</strong><small>{link.token} · {groups.find(group => group.group_id === link.group_id)?.name || link.group_id} · {bytes(link.used_bytes)} / {bytes(link.limit_bytes)}</small></div><span className={`status-badge ${link.enabled ? 'good' : 'off'}`}><i /> {link.enabled ? t('active') : t('disabled')}</span></div><div className="link-card-actions"><button className="table-action" onClick={copyStableLink} disabled={rotating || !link.enabled}><Copy size={12} className={rotating ? 'spin' : ''} /> {t('copyLink')}</button><button className="table-action" onClick={disable} disabled={!link.enabled}>{t('disable')}</button></div>{generated && <div className="generated-link-panel compact-generated"><div className="generated-link-row"><input className="generated-link-input" readOnly value={generated} aria-label={t('subscriptionLink')} /><button type="button" className="secondary-button" onClick={copy}><Copy size={14} /> {t('copyLink')}</button></div><div className="inline-qr">{qrDataUrl && <img src={qrDataUrl} alt={t('qrCodeTitle')} />}</div></div>}</div>
 }
 
 function CreateAccount({ auth, onClose, onCreated, onToast, t }) {
@@ -309,7 +349,7 @@ function EditAccount({ account, auth, onClose, onCreated, onToast, t }) {
 function CreateLink({ account, groups, auth, onClose, onCreated, onToast, t }) {
   const [form, setForm] = useState({ token: '', password: '', label: '', groupId: groups.find(group => group.group_id === 'all')?.group_id || groups[0]?.group_id || 'all', limit: '107374182400', expires: '', quotaPeriod: 'monthly_from_creation', duration: 'one_month', otherUid: '' }); const [saving, setSaving] = useState(false); const [result, setResult] = useState(null); const [qrDataUrl, setQrDataUrl] = useState('')
   const update = (field, value) => setForm(current => ({ ...current, [field]: value }))
-  const submit = async event => { event.preventDefault(); setSaving(true); try { const data = await request(`/api/admin/accounts/${encodeURIComponent(account.account_id)}/links`, { method: 'POST', body: JSON.stringify({ token: form.token, password: form.password, label: form.label || undefined, group_id: form.groupId, limit_bytes: Number(form.limit), expires_at: form.expires ? Math.floor(new Date(form.expires).getTime() / 1000) : null, quota_period: form.quotaPeriod, duration: form.expires ? undefined : form.duration, other_uid: form.otherUid || null }) }, auth); const url = new URL('/sub/c', PUBLIC_SUBSCRIPTION_ORIGIN); url.search = new URLSearchParams({ token: form.token.trim(), password: form.password, filename: form.label.trim() || 'vsub233' }).toString(); setResult({ url, password: data.password }); setQrDataUrl(await QRCode.toDataURL(url.toString(), { width: 260, margin: 2 })); onCreated() } catch (error) { onToast(t('operationFailed', { message: error.message })) } finally { setSaving(false) } }
+  const submit = async event => { event.preventDefault(); setSaving(true); try { const data = await request(`/api/admin/accounts/${encodeURIComponent(account.account_id)}/links`, { method: 'POST', body: JSON.stringify({ token: form.token, password: form.password, label: form.label || undefined, group_id: form.groupId, limit_bytes: Number(form.limit), expires_at: form.expires ? Math.floor(new Date(form.expires).getTime() / 1000) : null, quota_period: form.quotaPeriod, duration: form.expires ? undefined : form.duration, other_uid: form.otherUid || null }) }, auth); const url = subscriptionUrl(form.token.trim(), form.password); setResult({ url, password: data.password }); setQrDataUrl(await QRCode.toDataURL(url, { width: 260, margin: 2 })); onCreated() } catch (error) { onToast(t('operationFailed', { message: error.message })) } finally { setSaving(false) } }
   const copy = async () => { try { await navigator.clipboard.writeText(result.url.toString()); onToast(t('copied')) } catch { onToast(t('copyFailed')) } }
   return <Modal title={t('createLink')} eyebrow={t('linksFor', { name: account.display_name || account.username })} onClose={onClose} t={t}><form onSubmit={submit} className="modal-form"><label>{t('token')}<input required disabled={Boolean(result)} value={form.token} onChange={e => update('token', e.target.value)} placeholder="subscriber-001" /></label><label>{t('subscriptionPassword')}<input required disabled={Boolean(result)} type="password" value={form.password} onChange={e => update('password', e.target.value)} placeholder={t('passwordPlaceholder')} /></label><label>{t('linkLabel')}<input disabled={Boolean(result)} value={form.label} onChange={e => update('label', e.target.value)} placeholder={t('linkLabelPlaceholder')} /></label><label>{t('group')}<select disabled={Boolean(result)} value={form.groupId} onChange={e => update('groupId', e.target.value)}>{groups.map(group => <option key={group.group_id} value={group.group_id}>{group.name} · {group.node_count}</option>)}</select></label><label>{t('quotaBytes')}<input required disabled={Boolean(result)} type="number" min="1" value={form.limit} onChange={e => update('limit', e.target.value)} /></label><label>{t('quotaPeriod')}<select disabled={Boolean(result)} value={form.quotaPeriod} onChange={e => update('quotaPeriod', e.target.value)}><option value="calendar_month">{t('calendarMonth')}</option><option value="monthly_from_creation">{t('creationMonth')}</option><option value="weekly">{t('weekly')}</option><option value="daily">{t('daily')}</option><option value="lifetime">{t('lifetime')}</option></select></label><label>{t('duration')}<select disabled={Boolean(result)} value={form.duration} onChange={e => update('duration', e.target.value)}><option value="seven_days">{t('sevenDays')}</option><option value="one_month">{t('oneMonth')}</option><option value="one_year">{t('oneYear')}</option></select></label><label>{t('expiresOptional')}<input disabled={Boolean(result)} type="datetime-local" value={form.expires} onChange={e => update('expires', e.target.value)} /></label>{result && <><section className="generated-link-panel"><strong>{t('subscriptionLink')}</strong><p className="security-note">{t('linkSecurityNote')}</p><div className="generated-link-row"><input className="generated-link-input" readOnly value={result.url.toString()} /><button type="button" className="secondary-button" onClick={copy}><Copy size={14} /> {t('copyLink')}</button></div></section><section className="qr-panel"><div className="qr-copy"><strong>{t('qrCodeTitle')}</strong><p>{t('shadowrocketScan')}</p><small>{t('qrLocalNote')}</small></div><div className="qr-preview"><img src={qrDataUrl} alt={t('qrCodeTitle')} /></div></section></>}<div className="modal-foot"><button type="button" className="secondary-button" onClick={onClose}>{t('close')}</button><button type="submit" className="primary-button" disabled={saving || Boolean(result)}><Check size={15} /> {t('create')}</button></div></form></Modal>
 }
@@ -367,15 +407,14 @@ function TokenRow({ record, full, showQuickCopy, auth, onChanged, onToast, langu
   const generateAndCopy = async () => {
     setCopying(true)
     try {
-      const data = await request(`/api/admin/tokens/${encodeURIComponent(record.token)}/rotate`, { method: 'POST' }, auth)
-      const url = new URL('/sub/c', PUBLIC_SUBSCRIPTION_ORIGIN)
-      url.search = new URLSearchParams({ token: data.token || record.token, password: data.password, filename: record.label || 'vsub233' }).toString()
-      setGenerated(url.toString())
-      if (globalThis.navigator?.clipboard?.writeText) await globalThis.navigator.clipboard.writeText(url.toString())
+      const data = await request(`/api/admin/tokens/${encodeURIComponent(record.token)}/link`, { method: 'POST' }, auth)
+      const url = subscriptionUrl(data.token || record.token, undefined, data.filename || 'vpn233', data.access_token)
+      setGenerated(url)
+      if (globalThis.navigator?.clipboard?.writeText) await globalThis.navigator.clipboard.writeText(url)
       else {
         const input = globalThis.document?.createElement('textarea')
         if (!input) throw new Error('clipboard unavailable')
-        input.value = url.toString(); input.style.position = 'fixed'; input.style.opacity = '0'; globalThis.document.body.appendChild(input); input.select()
+        input.value = url; input.style.position = 'fixed'; input.style.opacity = '0'; globalThis.document.body.appendChild(input); input.select()
         if (!globalThis.document.execCommand('copy')) throw new Error('clipboard unavailable')
         input.remove()
       }
@@ -388,7 +427,7 @@ function TokenRow({ record, full, showQuickCopy, auth, onChanged, onToast, langu
 }
 
 function CreateToken({ auth, onClose, onCreated, onToast, t }) {
-  const [form, setForm] = useState({ token: '', password: '', limit: '107374182400', expires: '', quotaPeriod: 'monthly_from_creation', duration: 'one_month', otherUid: '', profileName: 'vsub233' })
+  const [form, setForm] = useState({ token: '', password: '', limit: '107374182400', expires: '', quotaPeriod: 'monthly_from_creation', duration: 'one_month', otherUid: '', profileName: 'vpn233' })
   const [subscriptionLink, setSubscriptionLink] = useState('')
   const [copied, setCopied] = useState(false)
   const [qrDataUrl, setQrDataUrl] = useState('')
@@ -398,10 +437,9 @@ function CreateToken({ auth, onClose, onCreated, onToast, t }) {
     event.preventDefault()
     setSaving(true)
     try {
-      await request('/api/admin/tokens', { method: 'POST', body: JSON.stringify({ token: form.token, password: form.password, profileName: form.profileName.trim() || 'vsub233', limit_bytes: Number(form.limit), expires_at: form.expires ? Math.floor(new Date(form.expires).getTime() / 1000) : null, quota_period: form.quotaPeriod, duration: form.expires ? undefined : form.duration, other_uid: form.otherUid || null }) }, auth)
-      const url = new URL('/sub/c', PUBLIC_SUBSCRIPTION_ORIGIN)
-      url.search = new URLSearchParams({ token: form.token.trim(), password: form.password, filename: form.profileName.trim() || 'vsub233' }).toString()
-      setSubscriptionLink(url.toString())
+      await request('/api/admin/tokens', { method: 'POST', body: JSON.stringify({ token: form.token, password: form.password, profileName: form.profileName.trim() || 'vpn233', limit_bytes: Number(form.limit), expires_at: form.expires ? Math.floor(new Date(form.expires).getTime() / 1000) : null, quota_period: form.quotaPeriod, duration: form.expires ? undefined : form.duration, other_uid: form.otherUid || null }) }, auth)
+      const url = subscriptionUrl(form.token.trim(), form.password)
+      setSubscriptionLink(url)
       setCopied(false)
       setQrDataUrl('')
       onCreated()
@@ -428,7 +466,7 @@ function CreateToken({ auth, onClose, onCreated, onToast, t }) {
       .catch(() => { if (active) setQrDataUrl('') })
     return () => { active = false }
   }, [subscriptionLink])
-  const qrFilename = `${(form.profileName.trim() || 'vsub233').replace(/[^a-z0-9_-]+/gi, '_')}-shadowrocket.png`
+  const qrFilename = `${(form.profileName.trim() || 'vpn233').replace(/[^a-z0-9_-]+/gi, '_')}-shadowrocket.png`
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={event => event.stopPropagation()}><div className="modal-head"><div><p className="eyebrow">{t('newPolicy')}</p><h2>{t('createToken')}</h2></div><button className="icon-button" title={t('close')} onClick={onClose}><X size={18} /></button></div><form onSubmit={submit} className="modal-form"><label>{t('token')}<input required disabled={Boolean(subscriptionLink)} value={form.token} placeholder={t('tokenPlaceholder')} onChange={e => update('token', e.target.value)} /></label><label>{t('subscriptionPassword')}<input required disabled={Boolean(subscriptionLink)} type="password" value={form.password} placeholder={t('passwordPlaceholder')} onChange={e => update('password', e.target.value)} /></label><label>{t('profileName')}<input required disabled={Boolean(subscriptionLink)} value={form.profileName} placeholder={t('profileNamePlaceholder')} onChange={e => update('profileName', e.target.value)} /></label><label>{t('quotaBytes')}<input required disabled={Boolean(subscriptionLink)} type="number" min="1" value={form.limit} onChange={e => update('limit', e.target.value)} /></label><label>{t('quotaPeriod')}<select disabled={Boolean(subscriptionLink)} value={form.quotaPeriod} onChange={e => update('quotaPeriod', e.target.value)}><option value="calendar_month">{t('calendarMonth')}</option><option value="monthly_from_creation">{t('creationMonth')}</option><option value="weekly">{t('weekly')}</option><option value="daily">{t('daily')}</option><option value="lifetime">{t('lifetime')}</option></select></label><label>{t('duration')}<select disabled={Boolean(subscriptionLink)} value={form.duration} onChange={e => update('duration', e.target.value)}><option value="seven_days">{t('sevenDays')}</option><option value="one_month">{t('oneMonth')}</option><option value="one_year">{t('oneYear')}</option></select></label><label>{t('expiresOptional')}<input disabled={Boolean(subscriptionLink)} type="datetime-local" value={form.expires} onChange={e => update('expires', e.target.value)} /></label><label>{t('otherUid')}<input disabled={Boolean(subscriptionLink)} value={form.otherUid} placeholder="order_xxx / user_xxx" onChange={e => update('otherUid', e.target.value)} /></label>{subscriptionLink && <><section className="generated-link-panel"><div><strong>{t('subscriptionLink')}</strong><p className="security-note">{t('linkSecurityNote')}</p></div><div className="generated-link-row"><input className="generated-link-input" readOnly value={subscriptionLink} aria-label={t('subscriptionLink')} /><button type="button" className="secondary-button" onClick={copyLink}><Copy size={15} /> {copied ? t('copied') : t('copyLink')}</button></div></section><section className="qr-panel"><div className="qr-copy"><strong>{t('qrCodeTitle')}</strong><p>{t('shadowrocketScan')}</p><small>{t('qrLocalNote')}</small></div><div className="qr-preview">{qrDataUrl ? <img src={qrDataUrl} alt={t('qrCodeTitle')} /> : <span><QrCode size={28} /> {t('qrGenerating')}</span>}</div>{qrDataUrl && <a className="secondary-button qr-download" href={qrDataUrl} download={qrFilename}><Download size={15} /> {t('downloadQr')}</a>}</section></>}<div className="modal-foot"><button type="button" className="secondary-button" onClick={onClose}>{t('close')}</button><button type="submit" className="primary-button" disabled={saving || Boolean(subscriptionLink)}><Check size={16} /> {saving ? t('create') : t('create')}</button></div></form></div></div>
 }
 
