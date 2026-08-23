@@ -6,5 +6,8 @@ admin_user: "root"
 admin_password: "root"
 upstream_mode: "direct"
 subscription_url: ""
+stats_file: "vpn233-client/data/stats.json"
+# Daily boundaries use Asia/Shanghai by default; set 0 for UTC.
+stats_timezone_offset_hours: 8
 # Optional no-auth SOCKS5 upstream, e.g. "127.0.0.1:7891" when Mihomo runs locally.
 upstream_socks5: ""

@@ -10,6 +10,12 @@ server:
   # Shared secret used only by provider registration requests.
   provider_registry_token: ""
   provider_stale_after_secs: 120
+  # Optional vpn233-client stats relay. Keep the password in config.yaml or env only.
+  client_stats_url: ""
+  client_stats_user: "root"
+  client_stats_password: ""
+  # Daily boundaries use Asia/Shanghai by default; set 0 for UTC.
+  traffic_timezone_offset_hours: 8
 subscriptions:
   - name: "local"
     links: []

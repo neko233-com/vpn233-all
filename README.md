@@ -71,6 +71,10 @@ Subscription access is intentionally separate from billing, orders, and the acco
 
 When `provider_registry_token` is configured, a provider can self-register with `registry_url`, send heartbeats, and publish its domain/IP/local addresses and node links. Registered providers are merged into subscriptions while enabled and fresh; `/sub/base64` provides a Base64 link feed for clients that expect that format. The registry token and provider heartbeat tokens are never returned by the admin API.
 
+### Traffic analytics
+
+`vpn233-client` persists Asia/Shanghai daily upload/download totals and the target host for each completed HTTP or SOCKS5 connection in its configured `stats_file` (default: `vpn233-client/data/stats.json`). Its authenticated `/api/v1/stats` endpoint exposes the retained history. To show actual proxy traffic and target hosts in the admin console, set `client_stats_url` and `client_stats_user` in the untracked subscribe config, and provide `VPN233_CLIENT_STATS_PASSWORD` through the service environment. If the relay is not configured, the console intentionally shows only subscription-response traffic and an empty domain state.
+
 ## Release bundles
 
 Tag a commit with `vX.Y.Z` to run the GitHub Actions release workflow. It builds the provider, subscribe server, client, and admin UI for Linux, Windows, and macOS, then publishes platform bundles containing example configs and the shell/PowerShell installers.

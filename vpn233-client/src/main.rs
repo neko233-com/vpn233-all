@@ -11,7 +11,12 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::process::Command as ProcessCommand;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+    sync::Arc,
+};
 use tokio::{
     fs,
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -59,6 +64,10 @@ struct Config {
     subscription_url: String,
     #[serde(default)]
     upstream_socks5: String,
+    #[serde(default = "default_stats_file")]
+    stats_file: PathBuf,
+    #[serde(default = "default_stats_timezone_offset_hours")]
+    stats_timezone_offset_hours: i32,
 }
 
 fn default_bind() -> String {
@@ -82,19 +91,54 @@ fn default_admin_password() -> String {
 fn default_upstream_mode() -> String {
     "direct".into()
 }
+fn default_stats_file() -> PathBuf {
+    "vpn233-client/data/stats.json".into()
+}
+fn default_stats_timezone_offset_hours() -> i32 {
+    8
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 #[derive(Clone)]
 struct AppState {
     config: Arc<RwLock<Config>>,
     stats: Arc<RwLock<Stats>>,
+    stats_file: PathBuf,
+    stats_timezone_offset_hours: i32,
 }
 
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct Stats {
     active_connections: usize,
     total_connections: u64,
     bytes_up: u64,
     bytes_down: u64,
+    #[serde(default)]
+    daily: BTreeMap<String, TrafficBucket>,
+    #[serde(default)]
+    domains: BTreeMap<String, DomainBucket>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct TrafficBucket {
+    upload_bytes: u64,
+    download_bytes: u64,
+    requests: u64,
+    connections: u64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct DomainBucket {
+    upload_bytes: u64,
+    download_bytes: u64,
+    requests: u64,
+    last_seen: u64,
 }
 
 #[tokio::main]
@@ -105,9 +149,14 @@ async fn main() -> Result<()> {
         return run_update();
     }
     let config = Arc::new(RwLock::new(load_config(&args.config).await?));
+    let stats_file = config.read().await.stats_file.clone();
+    let mut loaded_stats = load_stats(&stats_file).await.unwrap_or_default();
+    loaded_stats.active_connections = 0;
     let state = AppState {
         config: config.clone(),
-        stats: Arc::new(RwLock::new(Stats::default())),
+        stats: Arc::new(RwLock::new(loaded_stats)),
+        stats_file,
+        stats_timezone_offset_hours: config.read().await.stats_timezone_offset_hours,
     };
     let snapshot = config.read().await.clone();
     if snapshot.upstream_mode != "direct" {
@@ -185,6 +234,8 @@ async fn load_config(path: &PathBuf) -> Result<Config> {
             upstream_mode: default_upstream_mode(),
             subscription_url: String::new(),
             upstream_socks5: String::new(),
+            stats_file: default_stats_file(),
+            stats_timezone_offset_hours: default_stats_timezone_offset_hours(),
         }
     };
     if let Ok(value) = std::env::var("VPN233_CLIENT_ADMIN_USER") {
@@ -195,6 +246,14 @@ async fn load_config(path: &PathBuf) -> Result<Config> {
     }
     if let Ok(value) = std::env::var("VPN233_CLIENT_UPSTREAM_SOCKS5") {
         config.upstream_socks5 = value;
+    }
+    if let Ok(value) = std::env::var("VPN233_CLIENT_STATS_FILE") {
+        config.stats_file = PathBuf::from(value);
+    }
+    if let Ok(value) = std::env::var("VPN233_CLIENT_STATS_TIMEZONE_OFFSET_HOURS") {
+        config.stats_timezone_offset_hours = value
+            .parse()
+            .context("invalid VPN233_CLIENT_STATS_TIMEZONE_OFFSET_HOURS")?;
     }
     if let Ok(value) = std::env::var("VPN233_CLIENT_LISTEN_ADDR") {
         config.listen_addr = value;
@@ -307,7 +366,7 @@ async fn handle_http(mut stream: TcpStream, state: AppState) -> Result<()> {
     } else {
         remote.write_all(&buffer[..length]).await?;
     }
-    let result = copy_counted(&mut stream, &mut remote, &state).await;
+    let result = copy_counted(&mut stream, &mut remote, &state, &host).await;
     mark_close(&state).await;
     result
 }
@@ -352,7 +411,7 @@ async fn handle_socks(mut stream: TcpStream, state: AppState) -> Result<()> {
     let mut remote = connect_target(&state, &host, port).await?;
     stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
     mark_open(&state).await;
-    let result = copy_counted(&mut stream, &mut remote, &state).await;
+    let result = copy_counted(&mut stream, &mut remote, &state, &host).await;
     mark_close(&state).await;
     result
 }
@@ -365,6 +424,89 @@ async fn mark_open(state: &AppState) {
 async fn mark_close(state: &AppState) {
     let mut stats = state.stats.write().await;
     stats.active_connections = stats.active_connections.saturating_sub(1);
+}
+
+async fn load_stats(path: &PathBuf) -> Result<Stats> {
+    if !fs::try_exists(path).await? {
+        return Ok(Stats::default());
+    }
+    Ok(serde_json::from_slice(&fs::read(path).await?)?)
+}
+
+async fn save_stats(state: &AppState) -> Result<()> {
+    if let Some(parent) = state.stats_file.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    let tmp = state.stats_file.with_extension("json.tmp");
+    fs::write(&tmp, serde_json::to_vec_pretty(&*state.stats.read().await)?).await?;
+    fs::rename(tmp, &state.stats_file).await?;
+    Ok(())
+}
+
+fn date_key(timestamp: u64, offset_hours: i32) -> String {
+    let shifted = timestamp as i64 + i64::from(offset_hours) * 3_600;
+    let days = shifted.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month_part = (5 * doy + 2) / 153;
+    let day = doy - (153 * month_part + 2) / 5 + 1;
+    let month = month_part + if month_part < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn normalize_destination(host: &str) -> Option<String> {
+    let value = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if value.is_empty() || value == "localhost" {
+        return None;
+    }
+    if value.parse::<IpAddr>().is_ok() {
+        return Some(format!("[IP] {value}"));
+    }
+    Some(value.chars().take(253).collect())
+}
+
+async fn record_usage(state: &AppState, host: &str, upload_bytes: u64, download_bytes: u64) {
+    let now = unix_now();
+    let mut stats = state.stats.write().await;
+    stats.bytes_up = stats.bytes_up.saturating_add(upload_bytes);
+    stats.bytes_down = stats.bytes_down.saturating_add(download_bytes);
+    stats.total_connections = stats.total_connections.saturating_add(1);
+    let day = stats
+        .daily
+        .entry(date_key(now, state.stats_timezone_offset_hours))
+        .or_default();
+    day.upload_bytes = day.upload_bytes.saturating_add(upload_bytes);
+    day.download_bytes = day.download_bytes.saturating_add(download_bytes);
+    day.requests = day.requests.saturating_add(1);
+    day.connections = day.connections.saturating_add(1);
+    while stats.daily.len() > 400 {
+        let Some(first) = stats.daily.keys().next().cloned() else {
+            break;
+        };
+        stats.daily.remove(&first);
+    }
+    if let Some(domain) = normalize_destination(host) {
+        let bucket = stats.domains.entry(domain).or_default();
+        bucket.upload_bytes = bucket.upload_bytes.saturating_add(upload_bytes);
+        bucket.download_bytes = bucket.download_bytes.saturating_add(download_bytes);
+        bucket.requests = bucket.requests.saturating_add(1);
+        bucket.last_seen = now;
+    }
+    while stats.domains.len() > 2_000 {
+        let Some(first) = stats.domains.keys().next().cloned() else {
+            break;
+        };
+        stats.domains.remove(&first);
+    }
+    drop(stats);
+    if let Err(error) = save_stats(state).await {
+        warn!(%error, "traffic stats persistence failed");
+    }
 }
 fn split_host_port(value: &str, default_port: u16) -> (String, u16) {
     value
@@ -425,7 +567,7 @@ async fn connect_target(state: &AppState, host: &str, port: u16) -> Result<TcpSt
     Ok(stream)
 }
 
-async fn copy_counted<A, B>(left: &mut A, right: &mut B, state: &AppState) -> Result<()>
+async fn copy_counted<A, B>(left: &mut A, right: &mut B, state: &AppState, host: &str) -> Result<()>
 where
     A: AsyncRead + AsyncWrite + Unpin,
     B: AsyncRead + AsyncWrite + Unpin,
@@ -443,8 +585,6 @@ where
         Ok::<u64, std::io::Error>(bytes)
     };
     let (up, down) = tokio::try_join!(up, down)?;
-    let mut stats = state.stats.write().await;
-    stats.bytes_up += up;
-    stats.bytes_down += down;
+    record_usage(state, host, up, down).await;
     Ok(())
 }

@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::process::Command as ProcessCommand;
 use std::{
-    collections::HashMap,
     collections::HashSet,
+    collections::{BTreeMap, HashMap},
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
@@ -80,6 +80,14 @@ struct ServerConfig {
     provider_registry_token: String,
     #[serde(default = "default_provider_stale_after_secs")]
     provider_stale_after_secs: u64,
+    #[serde(default)]
+    client_stats_url: String,
+    #[serde(default)]
+    client_stats_user: String,
+    #[serde(default)]
+    client_stats_password: String,
+    #[serde(default = "default_traffic_timezone_offset_hours")]
+    traffic_timezone_offset_hours: i32,
 }
 
 const ADMIN_JWT_TTL_SECS: u64 = 365 * 24 * 60 * 60;
@@ -194,6 +202,9 @@ fn default_web_dir() -> String {
 fn default_provider_stale_after_secs() -> u64 {
     120
 }
+fn default_traffic_timezone_offset_hours() -> i32 {
+    8
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct SubscriptionSource {
@@ -249,6 +260,16 @@ struct UsageRecord {
     group_id: String,
     #[serde(default)]
     label: String,
+    #[serde(default)]
+    daily: BTreeMap<String, TrafficDay>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct TrafficDay {
+    upload_bytes: u64,
+    download_bytes: u64,
+    requests: u64,
+    connections: u64,
 }
 
 fn default_legacy_account_id() -> String {
@@ -468,6 +489,7 @@ async fn main() -> Result<()> {
             "/api/admin/tokens",
             get(admin_tokens).post(admin_create_token),
         )
+        .route("/api/admin/traffic", get(admin_traffic))
         .route(
             "/api/admin/accounts",
             get(admin_accounts).post(admin_create_account),
@@ -591,6 +613,10 @@ async fn load_config(path: &PathBuf) -> Result<Config> {
                 web_dir: default_web_dir(),
                 provider_registry_token: String::new(),
                 provider_stale_after_secs: default_provider_stale_after_secs(),
+                client_stats_url: String::new(),
+                client_stats_user: String::new(),
+                client_stats_password: String::new(),
+                traffic_timezone_offset_hours: default_traffic_timezone_offset_hours(),
             },
             subscriptions: vec![],
         }
@@ -617,6 +643,20 @@ async fn load_config(path: &PathBuf) -> Result<Config> {
         config.server.provider_stale_after_secs = stale
             .parse()
             .context("invalid VPN233_PROVIDER_STALE_AFTER_SECS")?;
+    }
+    if let Ok(url) = std::env::var("VPN233_CLIENT_STATS_URL") {
+        config.server.client_stats_url = url;
+    }
+    if let Ok(user) = std::env::var("VPN233_CLIENT_STATS_USER") {
+        config.server.client_stats_user = user;
+    }
+    if let Ok(password) = std::env::var("VPN233_CLIENT_STATS_PASSWORD") {
+        config.server.client_stats_password = password;
+    }
+    if let Ok(offset) = std::env::var("VPN233_TRAFFIC_TIMEZONE_OFFSET_HOURS") {
+        config.server.traffic_timezone_offset_hours = offset
+            .parse()
+            .context("invalid VPN233_TRAFFIC_TIMEZONE_OFFSET_HOURS")?;
     }
     Ok(config)
 }
@@ -912,6 +952,12 @@ fn civil_date(timestamp: u64) -> (i64, u32, u32) {
     (year, (month + 1) as u32, (remaining + 1) as u32)
 }
 
+fn date_key(timestamp: u64, offset_hours: i32) -> String {
+    let shifted = timestamp as i64 + i64::from(offset_hours) * 3_600;
+    let (year, month, day) = civil_date(shifted as u64);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
 fn month_key(timestamp: u64) -> String {
     let (year, month, _) = civil_date(timestamp);
     format!("{year:04}-{month:02}")
@@ -1136,6 +1182,12 @@ async fn charge_token(state: &AppState, token: &str, body_bytes: u64) -> bool {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let timezone_offset_hours = state
+        .config
+        .read()
+        .await
+        .server
+        .traffic_timezone_offset_hours;
     let mut usage = state.usage.write().await;
     let mut changed = expire_tokens(&mut usage, now);
     let Some(record) = usage.tokens.get_mut(token) else {
@@ -1159,6 +1211,19 @@ async fn charge_token(state: &AppState, token: &str, body_bytes: u64) -> bool {
     record.used_bytes = record.used_bytes.saturating_add(body_bytes);
     record.requests = record.requests.saturating_add(1);
     record.last_seen = Some(now);
+    let day = record
+        .daily
+        .entry(date_key(now, timezone_offset_hours))
+        .or_default();
+    day.download_bytes = day.download_bytes.saturating_add(body_bytes);
+    day.requests = day.requests.saturating_add(1);
+    day.connections = day.connections.saturating_add(1);
+    while record.daily.len() > 400 {
+        let Some(first) = record.daily.keys().next().cloned() else {
+            break;
+        };
+        record.daily.remove(&first);
+    }
     drop(usage);
     if let Err(error) = save_usage(state).await {
         warn!(%error, "usage persistence failed");
@@ -1696,6 +1761,221 @@ async fn admin_tokens(State(state): State<AppState>, headers: HeaderMap) -> Resp
     Json(json!({"tokens": views})).into_response()
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ClientTrafficDay {
+    #[serde(default)]
+    upload_bytes: u64,
+    #[serde(default)]
+    download_bytes: u64,
+    #[serde(default)]
+    requests: u64,
+    #[serde(default)]
+    connections: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ClientTrafficDomain {
+    #[serde(default)]
+    upload_bytes: u64,
+    #[serde(default)]
+    download_bytes: u64,
+    #[serde(default)]
+    requests: u64,
+    #[serde(default)]
+    last_seen: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ClientTrafficStats {
+    #[serde(default)]
+    daily: BTreeMap<String, ClientTrafficDay>,
+    #[serde(default)]
+    domains: BTreeMap<String, ClientTrafficDomain>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrafficDayView {
+    date: String,
+    upload_bytes: u64,
+    download_bytes: u64,
+    total_bytes: u64,
+    requests: u64,
+    connections: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrafficDomainView {
+    domain: String,
+    upload_bytes: u64,
+    download_bytes: u64,
+    total_bytes: u64,
+    requests: u64,
+    last_seen: u64,
+}
+
+fn day_view(date: String, day: TrafficDay) -> TrafficDayView {
+    TrafficDayView {
+        date,
+        upload_bytes: day.upload_bytes,
+        download_bytes: day.download_bytes,
+        total_bytes: day.upload_bytes.saturating_add(day.download_bytes),
+        requests: day.requests,
+        connections: day.connections,
+    }
+}
+
+fn client_day_view(date: String, day: ClientTrafficDay) -> TrafficDayView {
+    day_view(
+        date,
+        TrafficDay {
+            upload_bytes: day.upload_bytes,
+            download_bytes: day.download_bytes,
+            requests: day.requests,
+            connections: day.connections,
+        },
+    )
+}
+
+fn selected_days<T>(mut days: Vec<T>, limit: usize) -> Vec<T> {
+    if days.len() > limit {
+        let keep_from = days.len() - limit;
+        days.drain(..keep_from);
+    }
+    days
+}
+
+fn traffic_response(
+    source: &'static str,
+    available: bool,
+    note: &'static str,
+    daily: Vec<TrafficDayView>,
+    domains: Vec<TrafficDomainView>,
+    range_days: usize,
+) -> Response {
+    let domain_count = domains.len();
+    let upload_bytes = daily.iter().map(|day| day.upload_bytes).sum::<u64>();
+    let download_bytes = daily.iter().map(|day| day.download_bytes).sum::<u64>();
+    let requests = daily.iter().map(|day| day.requests).sum::<u64>();
+    let connections = daily.iter().map(|day| day.connections).sum::<u64>();
+    Json(json!({
+        "source": source,
+        "available": available,
+        "note": note,
+        "observed_at": unix_now(),
+        "range_days": range_days,
+        "daily": daily,
+        "domains": domains,
+        "summary": {
+            "upload_bytes": upload_bytes,
+            "download_bytes": download_bytes,
+            "total_bytes": upload_bytes.saturating_add(download_bytes),
+            "requests": requests,
+            "connections": connections,
+            "domains": domain_count,
+        },
+    }))
+    .into_response()
+}
+
+fn client_domain_views(stats: &ClientTrafficStats) -> Vec<TrafficDomainView> {
+    let mut domains = stats
+        .domains
+        .iter()
+        .map(|(domain, item)| TrafficDomainView {
+            domain: domain.clone(),
+            upload_bytes: item.upload_bytes,
+            download_bytes: item.download_bytes,
+            total_bytes: item.upload_bytes.saturating_add(item.download_bytes),
+            requests: item.requests,
+            last_seen: item.last_seen,
+        })
+        .collect::<Vec<_>>();
+    domains.sort_by(|left, right| {
+        right
+            .total_bytes
+            .cmp(&left.total_bytes)
+            .then_with(|| left.domain.cmp(&right.domain))
+    });
+    domains.truncate(100);
+    domains
+}
+
+async fn admin_traffic(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if !admin_authorized(&state, &headers).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let range_days = query
+        .get("days")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(30)
+        .clamp(1, 400);
+    let client_config = state.config.read().await.server.clone();
+    if !client_config.client_stats_url.trim().is_empty() {
+        let request = state
+            .client
+            .get(client_config.client_stats_url.trim())
+            .basic_auth(
+                client_config.client_stats_user,
+                Some(client_config.client_stats_password),
+            );
+        if let Ok(response) = request.send().await {
+            if response.status().is_success() {
+                if let Ok(stats) = response.json::<ClientTrafficStats>().await {
+                    let domains = client_domain_views(&stats);
+                    let daily = selected_days(
+                        stats
+                            .daily
+                            .into_iter()
+                            .map(|(date, day)| client_day_view(date, day))
+                            .collect(),
+                        range_days,
+                    );
+                    return traffic_response(
+                        "client",
+                        true,
+                        "已接入 vpn233-client，域名按代理请求目标统计；HTTPS CONNECT 以目标主机名统计。",
+                        daily,
+                        domains,
+                        range_days,
+                    );
+                }
+            }
+        }
+        warn!("client traffic stats fetch failed; falling back to subscription usage");
+    }
+
+    let usage = state.usage.read().await;
+    let mut aggregate = BTreeMap::<String, TrafficDay>::new();
+    for record in usage.tokens.values() {
+        for (date, day) in &record.daily {
+            let target = aggregate.entry(date.clone()).or_default();
+            target.upload_bytes = target.upload_bytes.saturating_add(day.upload_bytes);
+            target.download_bytes = target.download_bytes.saturating_add(day.download_bytes);
+            target.requests = target.requests.saturating_add(day.requests);
+            target.connections = target.connections.saturating_add(day.connections);
+        }
+    }
+    let daily = selected_days(
+        aggregate
+            .into_iter()
+            .map(|(date, day)| day_view(date, day))
+            .collect(),
+        range_days,
+    );
+    traffic_response(
+        "subscription_server",
+        false,
+        "当前仅统计订阅响应大小；要查看实际代理流量与 HTTP 域名，请配置 vpn233-client 统计接口。",
+        daily,
+        Vec::new(),
+        range_days,
+    )
+}
+
 #[derive(Debug, Serialize)]
 struct AccountView {
     account_id: String,
@@ -2064,6 +2344,7 @@ async fn admin_create_account_link(
         account_id: account_id.clone(),
         group_id,
         label: normalize_label(input.label),
+        daily: BTreeMap::new(),
     };
     record.period_key = quota_period_key(&record, now);
     let view = link_view(input.token.trim(), &record, now);
@@ -2551,6 +2832,7 @@ async fn admin_create_token(
         account_id,
         group_id,
         label: normalize_label(input.label),
+        daily: BTreeMap::new(),
     };
     record.period_key = quota_period_key(&record, now);
     state
@@ -2871,6 +3153,8 @@ fn verify_password(password: &str, _salt: &str, expected: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::{
         add_months, default_all_group_id, default_legacy_account_id, issue_subscription_jwt,
         month_key, parse_link, quota_period_key, refresh_quota, unix_now, verify_subscription_jwt,
@@ -2896,6 +3180,7 @@ mod tests {
             account_id: default_legacy_account_id(),
             group_id: default_all_group_id(),
             label: String::new(),
+            daily: BTreeMap::new(),
         }
     }
 
@@ -2911,6 +3196,10 @@ mod tests {
             web_dir: "web".into(),
             provider_registry_token: String::new(),
             provider_stale_after_secs: 120,
+            client_stats_url: String::new(),
+            client_stats_user: String::new(),
+            client_stats_password: String::new(),
+            traffic_timezone_offset_hours: 8,
         }
     }
 
