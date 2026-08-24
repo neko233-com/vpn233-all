@@ -518,7 +518,10 @@ async fn main() -> Result<()> {
             "/api/admin/groups/{group_id}",
             patch(admin_update_group).delete(admin_delete_group),
         )
-        .route("/api/admin/tokens/{token}", post(admin_disable_token))
+        .route(
+            "/api/admin/tokens/{token}",
+            post(admin_disable_token).delete(admin_delete_token),
+        )
         .route("/api/admin/tokens/{token}/renew", post(admin_renew_token))
         .route("/api/admin/tokens/{token}/reset", post(admin_reset_token))
         .route("/api/admin/tokens/{token}/rotate", post(admin_rotate_token))
@@ -2862,6 +2865,25 @@ async fn admin_disable_token(
     } else {
         return StatusCode::NOT_FOUND.into_response();
     }
+    if let Err(error) = save_usage(&state).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn admin_delete_token(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !admin_authorized(&state, &headers).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let mut usage = state.usage.write().await;
+    if usage.tokens.remove(&token).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    drop(usage);
     if let Err(error) = save_usage(&state).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
     }
