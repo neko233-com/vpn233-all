@@ -101,16 +101,21 @@ pub fn render_clash_config(nodes: &[ProxyNode]) -> Result<String, serde_yaml::Er
         .iter()
         .filter_map(|node| node.get("name").cloned())
         .collect();
+    let group_names = if names.is_empty() {
+        vec![string("DIRECT")]
+    } else {
+        names.clone()
+    };
 
     let mut select = Mapping::new();
     select.insert(string("name"), string("VPN233"));
     select.insert(string("type"), string("select"));
-    select.insert(string("proxies"), Value::Sequence(names.clone()));
+    select.insert(string("proxies"), Value::Sequence(group_names.clone()));
 
     let mut auto = Mapping::new();
     auto.insert(string("name"), string("VPN233 Auto"));
     auto.insert(string("type"), string("url-test"));
-    auto.insert(string("proxies"), Value::Sequence(names.clone()));
+    auto.insert(string("proxies"), Value::Sequence(group_names.clone()));
     auto.insert(
         string("url"),
         string("https://www.gstatic.com/generate_204"),
@@ -120,7 +125,7 @@ pub fn render_clash_config(nodes: &[ProxyNode]) -> Result<String, serde_yaml::Er
     let mut fallback = Mapping::new();
     fallback.insert(string("name"), string("VPN233 Fallback"));
     fallback.insert(string("type"), string("fallback"));
-    fallback.insert(string("proxies"), Value::Sequence(names.clone()));
+    fallback.insert(string("proxies"), Value::Sequence(group_names));
     fallback.insert(
         string("url"),
         string("https://www.gstatic.com/generate_204"),
@@ -183,33 +188,16 @@ pub fn render_clash_config(nodes: &[ProxyNode]) -> Result<String, serde_yaml::Er
         .into_iter()
         .chain(service_group_values)
         .collect(),
+        // Keep subscription output self-contained. GEOSITE/GEOIP rules make
+        // Clash Verge download external geodata during import, which can
+        // fail behind restricted networks and roll back an otherwise valid
+        // subscription. Users can still choose service groups manually.
         rules: vec![
             "DOMAIN-SUFFIX,local,DIRECT".into(),
             "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve".into(),
             "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve".into(),
             "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve".into(),
             "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve".into(),
-            "GEOSITE,netflix,Netflix".into(),
-            "GEOSITE,hbo,HBO".into(),
-            "GEOSITE,disney,DisneyPlus".into(),
-            "GEOSITE,youtube,YouTube".into(),
-            "GEOSITE,bahamut,Bahamut".into(),
-            "GEOSITE,bilibili,Bilibili".into(),
-            "GEOSITE,mytvsuper,MyTVSuper".into(),
-            "GEOSITE,category-ai-!cn,AI".into(),
-            "GEOSITE,telegram,Telegram".into(),
-            "GEOSITE,category-cryptocurrency,Crypto".into(),
-            "GEOSITE,steam,Steam".into(),
-            "GEOSITE,epicgames,Epic".into(),
-            "GEOSITE,xbox,Xbox".into(),
-            "GEOSITE,playstation,PlayStation".into(),
-            "GEOSITE,microsoft,Microsoft".into(),
-            "GEOSITE,scholar,Scholar".into(),
-            "GEOSITE,apple,Apple".into(),
-            "GEOSITE,google,Google".into(),
-            "GEOSITE,tiktok,TikTok".into(),
-            "GEOIP,CN,DIRECT".into(),
-            "GEOSITE,CN,DIRECT".into(),
             "MATCH,VPN233".into(),
         ],
     };
@@ -260,5 +248,14 @@ mod tests {
         assert!(body.contains("proxy-groups:"));
         assert!(body.contains("rules:"));
         assert!(!body.contains("name: DIRECT\n"));
+        assert!(!body.contains("GEOSITE,"));
+        assert!(!body.contains("GEOIP,"));
+    }
+
+    #[test]
+    fn clash_output_has_a_valid_direct_fallback_without_nodes() {
+        let body = render_clash_config(&[]).unwrap();
+        assert!(body.contains("name: VPN233"));
+        assert!(body.contains("- DIRECT"));
     }
 }
