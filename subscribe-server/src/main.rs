@@ -1364,18 +1364,24 @@ fn subscription_filename(query: &HashMap<String, String>) -> String {
         .or_else(|| query.get("profile"))
         .map(String::as_str)
         .unwrap_or("vpn233");
+    sanitize_subscription_filename(raw)
+}
+
+fn sanitize_subscription_filename(raw: &str) -> String {
     let mut name: String = raw
+        .trim()
+        .trim_matches(['"', '\'', '\\'])
         .trim()
         .chars()
         .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ' ') {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
                 character
             } else {
                 '_'
             }
         })
         .collect();
-    name = name.trim_matches([' ', '.']).to_owned();
+    name = name.trim_matches(['.', '_']).to_owned();
     if name.is_empty() {
         name = "vpn233".into();
     }
@@ -1414,7 +1420,7 @@ async fn subscription_response(
         headers.insert("subscription-userinfo", value);
     }
     headers.insert("profile-update-interval", HeaderValue::from_static("3600"));
-    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename={filename}")) {
         headers.insert(header::CONTENT_DISPOSITION, value);
     }
     if let Ok(value) =
@@ -2929,7 +2935,7 @@ async fn admin_subscription_link(
     if !admin_authorized(&state, &headers).await {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let created_at = {
+    let (created_at, filename) = {
         let usage = state.usage.read().await;
         let Some(record) = usage.tokens.get(&token) else {
             return StatusCode::NOT_FOUND.into_response();
@@ -2941,14 +2947,17 @@ async fn admin_subscription_link(
         {
             return (StatusCode::CONFLICT, "token is not active").into_response();
         }
-        record.created_at
+        (
+            record.created_at,
+            sanitize_subscription_filename(&record.label),
+        )
     };
     let config = state.config.read().await;
     match issue_subscription_jwt(&config.server, &token, created_at) {
         Ok(access_token) => Json(json!({
             "token": token,
             "access_token": access_token,
-            "filename": "vpn233",
+            "filename": filename,
         }))
         .into_response(),
         Err(error) => {
@@ -3175,12 +3184,13 @@ fn verify_password(password: &str, _salt: &str, expected: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use super::{
         add_months, default_all_group_id, default_legacy_account_id, issue_subscription_jwt,
-        month_key, parse_link, quota_period_key, refresh_quota, unix_now, verify_subscription_jwt,
-        CreateToken, QuotaPeriod, ServerConfig, TokenView, UsageRecord,
+        month_key, parse_link, quota_period_key, refresh_quota, sanitize_subscription_filename,
+        subscription_filename, unix_now, verify_subscription_jwt, CreateToken, QuotaPeriod,
+        ServerConfig, TokenView, UsageRecord,
     };
 
     fn test_record(created_at: u64, quota_period: QuotaPeriod) -> UsageRecord {
@@ -3283,6 +3293,16 @@ mod tests {
         let mut changed = config.clone();
         changed.admin_password = "changed".into();
         assert!(!verify_subscription_jwt(&changed, "vpn233", &first));
+    }
+
+    #[test]
+    fn subscription_filenames_are_safe_for_clash_import() {
+        let mut query = HashMap::new();
+        query.insert("filename".into(), "\"my home.yaml\"".into());
+        let filename = subscription_filename(&query);
+        assert_eq!(filename, "my_home.yaml");
+        assert!(!format!("attachment; filename={filename}").contains('"'));
+        assert_eq!(sanitize_subscription_filename("家庭配置"), "vpn233.yaml");
     }
 
     #[test]
