@@ -25,6 +25,9 @@ try {
     Assert-Equal 'latest URL' 'https://github.com/neko233-com/vpn233-all/releases/latest/download/SHA256SUMS' (Get-Vpn233ReleaseUrl SHA256SUMS)
     Assert-Equal 'pinned URL' 'https://github.com/neko233-com/vpn233-all/releases/download/v2.1.0/SHA256SUMS' (Get-Vpn233ReleaseUrl SHA256SUMS v2.1.0)
     Assert-Rejected 'version path traversal rejected' { Get-Vpn233Version '../main' }
+    Assert-Rejected 'invalid expected archive hash rejected before download' { Receive-Vpn233ReleaseAsset fixture.bin (Join-Path $work 'must-not-exist.bin') -ExpectedSha256 'invalid' }
+    Assert-Rejected 'expected archive hash with trailing LF rejected before download' { Receive-Vpn233ReleaseAsset fixture.bin (Join-Path $work 'must-not-exist.bin') -ExpectedSha256 (('a' * 64) + "`n") }
+    Assert-Equal 'invalid expected archive hash does not create output' $false (Test-Path -LiteralPath (Join-Path $work 'must-not-exist.bin'))
     foreach ($prefix in @('example.invalid', 'https://user:private@example.invalid/', 'https://example.invalid/?private=secret', 'https://example.invalid/#fragment', 'https://example.invalid/ has-space')) {
         Assert-Rejected 'unsafe mirror rejected without logging value' { ConvertTo-Vpn233MirrorPrefix $prefix }
     }

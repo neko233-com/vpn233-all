@@ -244,7 +244,7 @@ try {
             Receive-Vpn233ReleaseAsset 'SHA256SUMS' $sumsFile $Version
             $expected = Get-Vpn233Checksum $sumsFile $asset
             $Bundle = Join-Path $temporaryDir $asset
-            Receive-Vpn233ReleaseAsset $asset $Bundle $Version
+            Receive-Vpn233ReleaseAsset $asset $Bundle $Version -ExpectedSha256 $expected
             Test-Vpn233Checksum $Bundle $expected
         }
         $extract = Join-Path $temporaryDir 'extract'

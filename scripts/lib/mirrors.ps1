@@ -124,11 +124,133 @@ function Invoke-Vpn233AtomicDownload {
     finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
 }
 
+function Invoke-Vpn233RangeFetch {
+    param([string]$Url, [string]$Path, [long]$KnownTotal, [int]$BudgetMilliseconds)
+    $result = [pscustomobject]@{ Resume = $false; Total = $KnownTotal }
+    $request = $null; $response = $null; $inputStream = $null; $outputStream = $null
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $previousTls = [Net.ServicePointManager]::SecurityProtocol
+    [long]$maximumBytes = 1GB
+    try {
+        $offset = (Get-Item -LiteralPath $Path).Length
+        if ($offset -gt $maximumBytes -or $BudgetMilliseconds -lt 1) { return $result }
+        [Net.ServicePointManager]::SecurityProtocol = $previousTls -bor [Net.SecurityProtocolType]::Tls12
+        $request = [Net.HttpWebRequest]::Create($Url)
+        $request.Method = 'GET'; $request.KeepAlive = $false
+        $request.AutomaticDecompression = [Net.DecompressionMethods]::None
+        $request.Headers['Accept-Encoding'] = 'identity'
+        $request.Timeout = $BudgetMilliseconds; $request.ReadWriteTimeout = $BudgetMilliseconds
+        $request.MaximumAutomaticRedirections = 5
+        if ($offset -gt 0) { $request.AddRange([long]$offset) }
+        $responseTask = $request.GetResponseAsync()
+        $remaining = [int][Math]::Max(0, $BudgetMilliseconds - $clock.ElapsedMilliseconds)
+        if ($remaining -lt 1 -or -not $responseTask.Wait($remaining)) { return $result }
+        $response = $responseTask.GetAwaiter().GetResult()
+        if (([uri]$Url).Scheme -eq 'https' -and $response.ResponseUri.Scheme -ne 'https') { return $result }
+        if ($response.ContentEncoding -and $response.ContentEncoding -ne 'identity') { return $result }
+        [long]$bodyLength = $response.ContentLength
+        if ([int]$response.StatusCode -eq 200) {
+            # A server ignoring Range sent a new entity. Never append it.
+            $offset = 0
+            $result.Total = $bodyLength
+        } elseif ([int]$response.StatusCode -eq 206) {
+            $range = [string]$response.Headers['Content-Range']
+            if ($range -notmatch '^bytes ([0-9]+)-([0-9]+)/([0-9]+)$') { return $result }
+            [long]$first = 0; [long]$last = 0; [long]$total = 0
+            if (-not [long]::TryParse($Matches[1], [ref]$first) -or
+                -not [long]::TryParse($Matches[2], [ref]$last) -or
+                -not [long]::TryParse($Matches[3], [ref]$total) -or
+                $first -ne $offset -or $last -lt $first -or $total -le $last -or
+                $total -gt $maximumBytes -or ($KnownTotal -ge 0 -and $total -ne $KnownTotal)) { return $result }
+            $span = $last - $first + 1
+            if ($bodyLength -ge 0 -and $bodyLength -ne $span) { return $result }
+            # Chunked 206 is legal: Content-Range still bounds decoded bytes.
+            $bodyLength = $span
+            $result.Total = $total
+        } else { return $result }
+        if ($result.Total -gt $maximumBytes -or $bodyLength -gt $maximumBytes) { return $result }
+        $outputStream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        if ($offset -eq 0) { $outputStream.SetLength(0) }
+        $outputStream.Position = $offset
+        $inputStream = $response.GetResponseStream()
+        $buffer = New-Object byte[] 65536
+        [long]$received = 0
+        $result.Resume = $true
+        while ($true) {
+            $remaining = [int][Math]::Max(0, $BudgetMilliseconds - $clock.ElapsedMilliseconds)
+            if ($remaining -lt 1) { return $result }
+            $readTask = $inputStream.ReadAsync($buffer, 0, $buffer.Length)
+            if (-not $readTask.Wait($remaining)) { return $result }
+            $count = $readTask.GetAwaiter().GetResult()
+            if ($count -eq 0) { break }
+            if ($offset + $received + $count -gt $maximumBytes -or
+                ($bodyLength -ge 0 -and $received + $count -gt $bodyLength) -or
+                ($result.Total -ge 0 -and $offset + $received + $count -gt $result.Total)) {
+                $result.Resume = $false; return $result
+            }
+            $outputStream.Write($buffer, 0, $count)
+            $received += $count
+        }
+        # A complete response with the wrong hash is a bad source, not a
+        # reason to keep retrying its complete bytes. Short bodies may resume.
+        if (($bodyLength -lt 0 -or $received -eq $bodyLength) -and
+            ($result.Total -lt 0 -or $offset + $received -eq $result.Total)) { $result.Resume = $false }
+    } catch {
+        # Never expose exception messages: custom source URLs may be private.
+        Write-Verbose 'Verified source transfer interrupted; only valid partial bytes may resume.'
+    } finally {
+        if ($request) { $request.Abort() }
+        if ($inputStream) { $inputStream.Dispose() }
+        if ($outputStream) { $outputStream.Dispose() }
+        if ($response) { $response.Dispose() }
+        [Net.ServicePointManager]::SecurityProtocol = $previousTls
+    }
+    return $result
+}
+
+function Invoke-Vpn233VerifiedDownload {
+    param([string]$Url, [string]$Destination, [string]$ExpectedSha256)
+    $seconds = 300
+    if ($env:VPN233_GH_MAX_TIME) {
+        $seconds = 0
+        if (-not [int]::TryParse($env:VPN233_GH_MAX_TIME, [ref]$seconds) -or $seconds -lt 1) { throw 'VPN233_GH_MAX_TIME must be a positive number of seconds.' }
+    }
+    $temporary = $Destination + '.' + [guid]::NewGuid().ToString('N') + '.part'
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    [long]$total = -1
+    try {
+        $created = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $created.Dispose()
+        if ($env:OS -ne 'Windows_NT') {
+            & chmod 600 -- $temporary
+            if ($LASTEXITCODE -ne 0) { return $false }
+        }
+        for ($attempt = 0; $attempt -lt 3; $attempt++) {
+            $remaining = [Math]::Min([int]::MaxValue, ([long]$seconds * 1000) - $clock.ElapsedMilliseconds)
+            if ($remaining -lt 1) { break }
+            $transfer = Invoke-Vpn233RangeFetch $Url $temporary $total ([int]$remaining)
+            $total = $transfer.Total
+            $length = (Get-Item -LiteralPath $temporary).Length
+            # SHA proves full content even if the peer resets after the last
+            # byte. This is the only successful rename/cache path.
+            if ($length -gt 0 -and (Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash -ieq $ExpectedSha256) {
+                Move-Item -LiteralPath $temporary -Destination $Destination -Force
+                return $true
+            }
+            if (-not $transfer.Resume -or $length -eq 0) { break }
+        }
+        return $false
+    } catch { return $false }
+    finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
+}
+
 function Receive-Vpn233ReleaseAsset {
-    param([string]$Asset, [string]$Destination, [string]$Version = '', [switch]$Quiet)
+    param([string]$Asset, [string]$Destination, [string]$Version = '', [switch]$Quiet, [string]$ExpectedSha256 = '')
+    if ($ExpectedSha256 -and $ExpectedSha256 -notmatch '\A[a-fA-F0-9]{64}\z') { throw 'Expected SHA-256 must contain exactly 64 hexadecimal characters.' }
     $canonical = Get-Vpn233ReleaseUrl $Asset $Version
     foreach ($prefix in @(Get-Vpn233OrderedMirrorPrefixes release)) {
-        if (Invoke-Vpn233AtomicDownload ($prefix + $canonical) $Destination) {
+        $downloaded = if ($ExpectedSha256) { Invoke-Vpn233VerifiedDownload ($prefix + $canonical) $Destination $ExpectedSha256 } else { Invoke-Vpn233AtomicDownload ($prefix + $canonical) $Destination }
+        if ($downloaded) {
             $script:VPN233_LAST_MIRROR = $prefix
             Save-Vpn233MirrorCache release $prefix
             if (-not $Quiet) { Write-Host ('  Downloaded ' + $Asset) }

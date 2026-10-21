@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.2] - 2026-10-21
+
+- Recover interrupted release downloads with bounded same-source byte-range
+  retries and verify the complete archive before publishing it locally.
+- Check the expected SHA-256 separately for each mirror. Truncated or incorrect
+  responses cannot become successful cache entries or block later sources.
+- Keep shell and Windows PowerShell installation, update preservation and
+  explicit unsigned-download behavior consistent, with real local HTTP tests.
+
 ## [2.0.1] - 2026-10-21
 
 - Start the loopback HTTP test fixture without reverse DNS, avoiding the known

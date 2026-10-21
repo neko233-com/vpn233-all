@@ -851,12 +851,12 @@ download_release_bundle() {
   if ! vpn233_download_release_asset "SHA256SUMS" "$sums_file" "$VERSION" 0; then
     die "could not download SHA256SUMS; refusing to install an unverified release bundle"
   fi
-  if ! vpn233_download_release_asset "$asset" "$temp/$asset" "$VERSION" 0; then
-    die "could not download release asset: $asset"
-  fi
   expects="$(vpn233_sha256_from_sums "$sums_file" "$asset" || true)"
   if [[ -z "$expects" ]]; then
     die "SHA256SUMS does not list $asset; refusing to install (fail closed)"
+  fi
+  if ! vpn233_download_release_asset "$asset" "$temp/$asset" "$VERSION" 0 "$expects"; then
+    die "could not download and verify release asset: $asset"
   fi
   if ! vpn233_sha256_matches "$temp/$asset" "$expects"; then
     die "SHA-256 verification failed for $asset; refusing to install and keeping the current version."

@@ -3,8 +3,8 @@
 #
 # Offline unit tests for scripts/lib/mirrors.sh.
 #
-# The tests never touch the network: _vpn233_fetch_url is replaced with an
-# in-process fake that records every attempted URL. Run with:
+# Unit cases replace _vpn233_fetch_url with an in-process fake; the final HTTP
+# integration uses only a local loopback server and never external hosts. Run with:
 #   bash scripts/tests/test-mirrors.sh
 set -Eeuo pipefail
 
@@ -362,6 +362,17 @@ assert_fail "sums lookup rejects duplicate filename" vpn233_sha256_from_sums "$S
 printf 'not-a-digest  invalid.bin\n' > "$SUMS"
 assert_fail "sums lookup rejects malformed digest" vpn233_sha256_from_sums "$SUMS" invalid.bin
 assert_fail "sha256 rejects embedded whitespace" vpn233_sha256_matches "$SUM_FILE" "$EXPECTED "
+
+# Real curl/HTTP integration stays on loopback and exercises production code,
+# including truncation, matching/mismatched Range responses and source isolation.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; assert sys.version_info >= (3, 10)' >/dev/null 2>&1; then
+  python3 "$SCRIPT_DIR/test-mirror-http.py"
+elif command -v python >/dev/null 2>&1 && python -c 'import sys; assert sys.version_info >= (3, 10)' >/dev/null 2>&1; then
+  python "$SCRIPT_DIR/test-mirror-http.py"
+else
+  printf 'test-mirrors: Python 3 is required for local HTTP integration tests.\n' >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

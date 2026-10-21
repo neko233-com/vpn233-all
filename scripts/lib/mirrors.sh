@@ -378,18 +378,19 @@ vpn233_download_atomic() {
 
 # Downloader primitive. Tests override this function to run offline.
 _vpn233_fetch_url() {
-  local url="$1" dest="$2"
+  local url="$1" dest="$2" max_time="${3:-$VPN233_GH_MAX_TIME}" connect_timeout="${4:-$VPN233_GH_CONNECT_TIMEOUT}" timing=""
+  [[ "${5:-}" != timed ]] || timing='%{time_total}'
   if command -v curl >/dev/null 2>&1; then
-    if curl --fail --location --silent --show-error --proto '=https,http' --proto-redir '=https,http' \
-      --connect-timeout "$VPN233_GH_CONNECT_TIMEOUT" \
-      --max-time "$VPN233_GH_MAX_TIME" \
+    if curl -q --fail --location --silent --show-error --proto '=https,http' --proto-redir '=https,http' \
+      --connect-timeout "$connect_timeout" \
+      --max-time "$max_time" --write-out "$timing" --header 'Accept-Encoding: identity' \
       --output "$dest" "$url"; then
       return 0
     fi
     return 1
   fi
   if command -v wget >/dev/null 2>&1; then
-    if wget --quiet --tries=1 --timeout="$VPN233_GH_MAX_TIME" \
+    if wget --quiet --tries=1 --timeout="$max_time" \
       --output-document="$dest" "$url"; then
       return 0
     fi
@@ -399,25 +400,100 @@ _vpn233_fetch_url() {
   return 1
 }
 
+# Resume only the current source's private partial file. curl rejects an HTTP
+# server that ignores Range or returns a mismatched resume position. A final
+# digest check below is still required; a successful HTTP response is not trust.
+_vpn233_resume_url() {
+  local url="$1" dest="$2" max_time="$3" connect_timeout="$4"
+  command -v curl >/dev/null 2>&1 || return 1
+  curl -q --fail --location --silent --proto '=https,http' --proto-redir '=https,http' \
+    --connect-timeout "$connect_timeout" --max-time "$max_time" \
+    --header 'Accept-Encoding: identity' --write-out '%{time_total}' \
+    --continue-at - --output "$dest" "$url"
+}
+
+# Atomic archive download with an expected digest. A source gets at most three
+# requests: the initial transfer and two same-source resumptions after transport
+# failures with nonempty partial data. Complete but wrong content immediately
+# falls back to the next source. No partial file is shared between sources.
+vpn233_download_verified_atomic() {
+  local url="$1" dest="$2" expected="$3" tmp attempt=1 transferred=0 transfer_status=0
+  local remaining transfer_time connect_timeout
+  [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ ]] || return 1
+  remaining="$(LC_ALL=C awk -v budget="$VPN233_GH_MAX_TIME" 'BEGIN {
+    if (budget !~ /^[0-9]+([.][0-9]+)?$/ || budget < 0.001) exit 1
+    printf "%.6f", budget
+  }')" || return 1
+  connect_timeout="$(LC_ALL=C awk -v connect="$VPN233_GH_CONNECT_TIMEOUT" -v budget="$remaining" 'BEGIN {
+    if (connect !~ /^[0-9]+([.][0-9]+)?$/ || connect < 0.001) exit 1
+    printf "%.6f", (connect < budget ? connect : budget)
+  }')" || return 1
+  tmp="$(mktemp "${dest}.part.XXXXXX" 2>/dev/null)" || return 1
+  while [[ "$attempt" -le 3 ]]; do
+    transferred=0
+    transfer_status=0
+    if [[ "$attempt" -eq 1 ]]; then
+      if transfer_time="$(_vpn233_fetch_url "$url" "$tmp" "$remaining" "$connect_timeout" timed 2>/dev/null)"; then transferred=1; else transfer_status=$?; fi
+    else
+      if transfer_time="$(_vpn233_resume_url "$url" "$tmp" "$remaining" "$connect_timeout" 2>/dev/null)"; then transferred=1; else transfer_status=$?; fi
+    fi
+    if [[ -s "$tmp" ]] && vpn233_sha256_matches "$tmp" "$expected"; then
+      if mv -f "$tmp" "$dest"; then return 0; fi
+      break
+    fi
+    # A complete response with the wrong digest must not be continued, and a
+    # transfer with no data cannot be safely resumed. Neither is cached.
+    if [[ "$transferred" -eq 1 || ! -s "$tmp" ]]; then break; fi
+    # HTTP errors and unsupported/invalid resume responses cannot be repaired
+    # by repeating the same Range request. Network interruptions remain bounded.
+    case "$transfer_status" in 22|33|36|63) break ;; esac
+    # curl's transfer timer includes connection and body time. All requests to
+    # one source share the configured network budget, including partial retries.
+    remaining="$(LC_ALL=C awk -v budget="$remaining" -v used="$transfer_time" 'BEGIN {
+      # curl rounds timeouts to milliseconds; a smaller remainder becomes zero
+      # (unlimited), so stop instead of accidentally removing the time bound.
+      if (used !~ /^[0-9]+([.][0-9]+)?$/ || used < 0 || budget - used < 0.001) exit 1
+      printf "%.6f", budget - used
+    }')" || break
+    connect_timeout="$(LC_ALL=C awk -v connect="$VPN233_GH_CONNECT_TIMEOUT" -v budget="$remaining" 'BEGIN {
+      printf "%.6f", (connect < budget ? connect : budget)
+    }')" || break
+    attempt=$((attempt + 1))
+  done
+  rm -f "$tmp" 2>/dev/null || true
+  return 1
+}
+
 # Download a release asset through the mirror list with auto fallback.
-# Arguments: <asset> <destination> [version] [quiet]
+# Arguments: <asset> <destination> [version] [quiet] [expected SHA-256]
 vpn233_download_release_asset() {
-  local asset="$1" dest="$2" version="${3:-}" quiet="${4:-0}"
-  local base prefix candidate prefixes
+  local asset="$1" dest="$2" version="${3:-}" quiet="${4:-0}" expected="${5:-}"
+  local base prefix candidate prefixes downloaded source_index=0
+  if [[ -n "$expected" && ! "$expected" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+    printf 'VPN233: expected SHA-256 must contain exactly 64 hexadecimal characters.\n' >&2
+    return 1
+  fi
   base="$(vpn233_github_release_url "$asset" "$version")" || return 1
   prefixes="$(vpn233_mirror_ordered_prefixes release || exit 1; printf '\001')" || return 1
   prefixes="${prefixes%$'\001'}"
   while IFS= read -r prefix; do
+    source_index=$((source_index + 1))
     candidate="$(vpn233_mirror_apply "$prefix" "$base")"
-    if vpn233_download_atomic "$candidate" "$dest"; then
+    downloaded=0
+    if [[ -n "$expected" ]]; then
+      if vpn233_download_verified_atomic "$candidate" "$dest" "$expected"; then downloaded=1; fi
+    elif vpn233_download_atomic "$candidate" "$dest" 2>/dev/null; then
+      downloaded=1
+    fi
+    if [[ "$downloaded" -eq 1 ]]; then
       vpn233_mirror_cache_store release "$prefix"
       VPN233_LAST_MIRROR="$prefix"
       if [[ "$quiet" != "1" ]]; then
-        printf '  downloaded %s via %s\n' "$asset" "${prefix:-direct GitHub}"
+        printf '  downloaded release asset from source %s\n' "$source_index"
       fi
       return 0
     fi
-    printf '  mirror unavailable: %s (trying next source)\n' "${prefix:-direct GitHub}" >&2
+    printf '  release source %s unavailable or unverified (trying next source)\n' "$source_index" >&2
   done <<< "${prefixes%$'\n'}"
   printf 'VPN233: unable to download %s from any known GitHub source.\n' "$asset" >&2
   return 1
