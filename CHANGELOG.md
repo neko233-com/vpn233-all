@@ -1,6 +1,25 @@
 # Changelog
 
-## [2.0.2] - 2026-10-21
+## [2.1.0] - 2026-10-22
+
+- Move repository verification, privacy, version preparation, deterministic
+  archives, release checks, content-addressed Quick reports and network fixtures
+  into the Rust workspace. Remove the Python runtime and its source/test tools.
+- Preserve the previous negative cases in native Rust tests, use one loopback
+  HTTP fixture across operating systems, and validate official Mihomo output
+  with the same checksum-pinned parser matrix.
+- Keep the verification executable in a separate build directory and reuse
+  tested, privacy-remapped native tools in CI. Product archives still contain
+  only the three application binaries.
+- Require a successful stable release, published assets, and real public
+  installation/online update on Linux and Windows before Pages can publish.
+  Ordinary commits do not build Pages; unchanged documentation skips publishing.
+- Verify generated pages locally before upload and record the actual deployed
+  release commit and documentation tree with stale-release protection.
+- Strengthen archive metadata privacy, bounded extraction-free validation,
+  Windows path handling, architecture checks and paired tar/ZIP content checks.
+
+## [2.0.2] - 2026-10-21 (unpublished)
 
 - Recover interrupted release downloads with bounded same-source byte-range
   retries and verify the complete archive before publishing it locally.

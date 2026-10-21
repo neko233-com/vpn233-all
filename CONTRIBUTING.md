@@ -25,15 +25,15 @@ part of the contribution rules.
 | --- | --- |
 | Rust | 1.99.1 (`rust-toolchain.toml` pins it; minimum supported version 1.96) |
 | Node.js | 24.x (admin web) |
-| Python | 3.11+ (verification, E2E and release tooling) |
+| Rust development tools | The `vpn233-xtask` workspace crate and the same pinned Rust toolchain |
 | Git Bash | Required on Windows for the `.sh` test suites |
 
 ```bash
 # Rust
 cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo build --release --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo build --locked --release --workspace --exclude vpn233-xtask
 
 # Admin web
 cd admin-web
@@ -56,6 +56,7 @@ Useful subsets:
 
 ```bash
 bash scripts/verify-all.sh --quick        # incremental development checks
+export VPN233_XTASK_BIN="$(bash scripts/xtask.sh --path)"
 bash scripts/e2e/e2e.sh                   # real three-service E2E (Linux/macOS/Git Bash)
 pwsh -File scripts/e2e/e2e.ps1             # Windows E2E (PowerShell)
 bash scripts/e2e/check-docs.sh            # documentation gate
@@ -66,6 +67,14 @@ pwsh -File scripts/tests/test-installers.ps1
 
 The E2E suites build no credentials into the repository: they generate random
 passwords in a temporary directory and delete it afterwards.
+
+Verification, fixtures, privacy checks, archive creation and release checks are
+implemented in Rust. `cargo test --locked --workspace` includes their regression
+tests. `cargo xtask --help` lists the development commands. The wrappers build
+the tool once in `target/xtask-bootstrap`, so product flags and test builds cannot
+rewrite the executable used by a Quick cache transaction. Set
+`$env:VPN233_XTASK_BIN = & ./scripts/xtask.ps1 -PathOnly` before standalone
+PowerShell E2E. The development tool is excluded from product archives.
 
 ## Code style
 
@@ -107,9 +116,18 @@ Releases are tag-driven and must be created from `main` only:
    helper with `--publish` / `-Publish` to verify again and push the new tag.
 4. The release workflow re-runs the full CI pipeline, builds Linux/Windows/macOS
    bundles, publishes them with `SHA256SUMS` and `version.txt`, and verifies the
-   published assets before the release is considered successful.
+   published assets and actual public installation/update on Linux and Windows
+   before the release is considered successful.
 5. Never publish when the E2E suites, the checksum verification or the generated
    admin UI are red.
+
+GitHub Pages runs after a successful formal release, or through a manual request
+that names an already successful release run. Both paths use the same Rust gate:
+the latest stable tag, exact commit, all release jobs and public install/update
+must be verified. An unchanged documentation tree skips Jekyll, upload and
+deployment. Generated HTML must pass privacy, internal links, anchors and browser
+external-request checks before publication. A successful deployment records its
+actual release commit and documentation tree in public GitHub deployment metadata.
 
 ## Security reports
 

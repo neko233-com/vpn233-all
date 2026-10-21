@@ -29,6 +29,6 @@ cargo publish -p vpn233-core-lib-rust --dry-run
 ```
 
 The example exports 57 synthetic, self-contained configurations into a fresh
-directory. Use the repository's `scripts/e2e/check_mihomo_parser.py` with
+directory. Use the repository's `cargo xtask network mihomo` with
 `--core-fixtures-dir target/mihomo-fixtures` and a verified official Mihomo
 binary to check them with `-t`. Parsing does not verify real proxy connectivity.

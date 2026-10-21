@@ -5,11 +5,12 @@ members = [
     "subscribe-server",
     "vpn233-client",
     "vpn233-core-lib-rust",
+    "xtask",
 ]
 
 [workspace.package]
 edition = "2021"
-version = "2.0.2"
+version = "2.1.0"
 license = "MIT"
 rust-version = "1.96"
 

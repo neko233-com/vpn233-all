@@ -19,7 +19,7 @@ title: 隐私与公开仓库
 目的地址统计 `record_domains` 默认关闭，仅在明确启用时记录；未启用时仍提供聚合流量和连接数。关闭后重新启动 Client 不再向统计接口返回以前保存的目的地址，后续保存时清理该历史。本地日志仍可能含运行信息，应妥善保护。无遥测不等于本机从不处理私密数据。
 
 ```bash
-python scripts/check-privacy.py --history
+cargo xtask privacy --history
 gitleaks git --config .gitleaks.toml --redact
 ```
 

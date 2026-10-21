@@ -21,6 +21,7 @@ $cacheTicket = ''
 $cacheFinished = $false
 $cacheEligible = $Quick -and -not ($NoQuickCache -or $SkipRust -or $SkipWeb -or $SkipScripts -or $SkipDocs -or $SkipE2E -or $SkipAudit)
 $cacheEngine = (Get-Process -Id $PID).Path
+$script:XTask = ''
 
 function Invoke-Native {
     param([string]$Tool, [string[]]$Arguments = @())
@@ -54,7 +55,7 @@ function Get-Candidates {
 function Invoke-QuickCache {
     param([string[]]$Arguments)
     try {
-        $output = & python scripts/quick-cache.py @Arguments --flavor powershell --engine $cacheEngine 2>$null
+        $output = & $script:XTask quick-cache @Arguments --flavor powershell --engine $cacheEngine 2>$null
         if ($LASTEXITCODE -eq 0) { return ($output | ConvertFrom-Json) }
     }
     catch { Write-Verbose 'Quick cache unavailable; real checks required' }
@@ -63,22 +64,24 @@ function Invoke-QuickCache {
 
 Push-Location $RootDir
 try {
+    $script:XTask = & (Join-Path $PSScriptRoot 'xtask.ps1') -PathOnly
+    $env:VPN233_XTASK_BIN = $script:XTask
     $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $RootDir 'target' }
     if (-not [IO.Path]::IsPathRooted($targetDir)) { $targetDir = Join-Path $RootDir $targetDir }
     $releaseDir = [IO.Path]::GetFullPath((Join-Path $targetDir 'release'))
-    $env:CARGO_ENCODED_RUSTFLAGS = python scripts/build-environment.py
+    $env:CARGO_ENCODED_RUSTFLAGS = & $script:XTask build-environment
     if ($LASTEXITCODE -ne 0) { throw 'Cannot configure reproducible Rust build environment' }
     Invoke-Step 'version chain and candidate/index privacy' {
-        Invoke-Native python @('scripts/release-version.py')
-        Invoke-Native python @('scripts/check-privacy.py')
+        Invoke-Native $script:XTask @('version')
+        Invoke-Native $script:XTask @('privacy')
         Invoke-Native git @('diff', '--check')
     }
     if (-not $Quick) {
-        Invoke-Step 'full Git history privacy (redacted)' { Invoke-Native python @('scripts/check-privacy.py', '--history') }
+        Invoke-Step 'full Git history privacy (redacted)' { Invoke-Native $script:XTask @('privacy', '--history') }
         Invoke-Step 'gitleaks full Git history (redacted)' { Invoke-Native gitleaks @('git', '--config', '.gitleaks.toml', '--redact', '--no-banner', '--exit-code', '1') }
     }
     else {
-        Invoke-Step 'current full Git history privacy (redacted)' { Invoke-Native python @('scripts/check-privacy.py', '--history-only') }
+        Invoke-Step 'current full Git history privacy (redacted)' { Invoke-Native $script:XTask @('privacy', '--history-only') }
     }
     if ($cacheEligible -and -not $script:Failures) {
         $cached = Invoke-QuickCache @('probe')
@@ -98,7 +101,7 @@ try {
         Invoke-Step 'Rust format' { Invoke-Native cargo @('fmt', '--all', '--', '--check') }
         Invoke-Step 'Rust clippy (locked)' { Invoke-Native cargo @('clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings') }
         Invoke-Step 'Rust tests (locked)' { Invoke-Native cargo @('test', '--locked', '--workspace') }
-        if (-not $Quick) { Invoke-Step 'release binaries' { Invoke-Native cargo @('build', '--locked', '--release', '--workspace') } }
+        if (-not $Quick) { Invoke-Step 'release binaries' { Invoke-Native cargo @('build', '--locked', '--release', '--workspace', '--exclude', 'vpn233-xtask') } }
     }
     if (-not $SkipWeb) {
         Invoke-Step 'admin-web dependencies/build/output gate' {
@@ -143,7 +146,6 @@ try {
                 Invoke-Native powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $path)
             }
         }
-        Invoke-Step 'release and privacy regression tests' { Invoke-Native python @('-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_*.py', '-v') }
     }
     if (-not $SkipDocs) { Invoke-Step 'documentation contract' { Invoke-Native (Get-Bash) @('scripts/e2e/check-docs.sh') } }
     if (-not $Quick -and -not $SkipAudit) {
@@ -155,7 +157,7 @@ try {
             $fixtureDir = Join-Path ([IO.Path]::GetTempPath()) ('vpn233-core-fixtures-' + [guid]::NewGuid().ToString('N'))
             try {
                 Invoke-Native cargo @('run', '--locked', '--quiet', '-p', 'vpn233-core-lib-rust', '--example', 'mihomo_fixtures', '--', $fixtureDir)
-                Invoke-Native python @('scripts/e2e/check_mihomo_parser.py', '--download-core', '--cache-dir', '.cache/tools/mihomo', '--provider-bin', (Join-Path $releaseDir 'vpn233-provider-server.exe'), '--core-fixtures-dir', $fixtureDir)
+                Invoke-Native $script:XTask @('network', 'mihomo', '--download-core', '--cache-dir', '.cache/tools/mihomo', '--provider-bin', (Join-Path $releaseDir 'vpn233-provider-server.exe'), '--core-fixtures-dir', $fixtureDir)
             }
             finally {
                 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
@@ -178,7 +180,7 @@ try {
             $bundleEnvironment = @{
                 PLATFORM = 'windows-x86_64'; TARGET = 'x86_64-pc-windows-msvc'; EXE_SUFFIX = '.exe'
                 VERSION = (Get-Content -LiteralPath 'version.txt' -Raw).Trim()
-                TARGET_DIR = $releaseDir.Replace('\', '/'); BUNDLE_ROOT = 'target/verify-package'
+                TARGET_DIR = $releaseDir.Replace('\', '/'); BUNDLE_ROOT = 'target/verify-package/assets'
             }
             $previousBundleEnvironment = @{}
             foreach ($name in $bundleEnvironment.Keys) {

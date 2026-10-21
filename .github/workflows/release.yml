@@ -21,10 +21,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Cache native Rust verification tool
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target/xtask-bootstrap
+          key: xtask-${{ runner.os }}-hostlatest-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
       - name: Verify main ancestry and shared version
         run: |
           git merge-base --is-ancestor HEAD origin/main
-          python scripts/release-version.py
+          bash scripts/xtask.sh version
           test "${GITHUB_REF_NAME}" = "v$(tr -d '\r\n' < version.txt)"
   verify:
     name: Verify (full CI)
@@ -63,9 +68,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Restore verified native Rust tool
+        if: matrix.reuse != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          python-version: "3.14"
+          name: verified-xtask-${{ matrix.reuse }}
+          path: target/xtask-bootstrap/debug
+      - name: Select reused native Rust tool
+        if: matrix.reuse != ''
+        shell: bash
+        run: |
+          chmod +x target/xtask-bootstrap/debug/vpn233-xtask${{ matrix.exe }}
+          XTASK_BIN="$PWD/target/xtask-bootstrap/debug/vpn233-xtask${{ matrix.exe }}"
+          if [ "$RUNNER_OS" = Windows ]; then XTASK_BIN="$(cygpath -m "$XTASK_BIN")"; fi
+          printf 'VPN233_XTASK_BIN=%s\n' "$XTASK_BIN" >> "$GITHUB_ENV"
       - name: Restore verified admin web
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -87,7 +103,11 @@ jobs:
           rustup target add "$TARGET"
       - name: Remap source and dependency paths for privacy
         if: matrix.reuse == ''
-        run: python scripts/build-environment.py --github
+        shell: bash
+        run: |
+          XTASK_BIN="$(bash scripts/xtask.sh --path)"
+          printf 'VPN233_XTASK_BIN=%s\n' "$XTASK_BIN" >> "$GITHUB_ENV"
+          "$XTASK_BIN" build-environment --github
       - if: matrix.reuse == ''
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -96,7 +116,7 @@ jobs:
         if: matrix.reuse == ''
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --locked --release --workspace --target "$TARGET"
+        run: cargo build --locked --release --workspace --exclude vpn233-xtask --target "$TARGET"
       - name: Install Bash and portable GNU tools for macOS E2E
         if: matrix.reuse == ''
         shell: bash
@@ -157,6 +177,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Restore verified Linux Rust tool
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verified-xtask-Linux
+          path: target/xtask-bootstrap/debug
+      - name: Select verified Rust tool
+        run: |
+          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-archives-*
@@ -166,7 +195,7 @@ jobs:
         run: |
           (cd dist && sha256sum vpn233-rust-*.tar.gz vpn233-rust-*.zip | LC_ALL=C sort -k2 > SHA256SUMS)
           printf '%s\n' "${GITHUB_REF_NAME#v}" > dist/version.txt
-          python scripts/verify-release.py dist "${GITHUB_REF_NAME#v}"
+          "$VPN233_XTASK_BIN" verify-release dist "${GITHUB_REF_NAME#v}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: checked-release-assets
@@ -197,7 +226,8 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
         run: bash .github/scripts/release-body.sh > release-body.md
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+      - name: Publish official assets
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
@@ -219,9 +249,52 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Restore verified Linux Rust tool
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verified-xtask-Linux
+          path: target/xtask-bootstrap/debug
+      - name: Select verified Rust tool
+        run: |
+          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
       - name: Download and verify published release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --dir assets
-          python scripts/verify-release.py assets "${GITHUB_REF_NAME#v}"
+          "$VPN233_XTASK_BIN" verify-release assets "${GITHUB_REF_NAME#v}"
+  public-install:
+    name: Public installation and online update (${{ matrix.platform }})
+    needs: verify-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: Linux
+            extension: ""
+          - os: windows-latest
+            platform: Windows
+            extension: .exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Restore verified native Rust tool
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verified-xtask-${{ matrix.platform }}
+          path: target/xtask-bootstrap/debug
+      - name: Install and update from public release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          XTASK_BIN="$PWD/target/xtask-bootstrap/debug/vpn233-xtask${{ matrix.extension }}"
+          chmod +x "$XTASK_BIN"
+          "$XTASK_BIN" network public-install --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --mirror off

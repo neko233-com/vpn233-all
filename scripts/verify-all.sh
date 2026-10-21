@@ -16,36 +16,38 @@ started=$SECONDS
 checks=0
 step() { printf '\n==> %s\n' "$*"; checks=$((checks + 1)); "$@"; }
 require() { command -v "$1" >/dev/null || { echo "Required tool missing: $1" >&2; exit 1; }; }
-candidates() { git ls-files --cached --others --exclude-standard -z | python -c 'import sys; extension=sys.argv[1]; sys.stdout.buffer.write(b"\0".join(sorted(set(p for p in sys.stdin.buffer.read().split(b"\0") if p.endswith(extension.encode()) and not p.startswith(b"legacy/")))) + b"\0")' "$1"; }
-require python
-release_dir="$(python -c 'import os; from pathlib import Path; print((Path(os.environ.get("CARGO_TARGET_DIR", "target")) / "release").resolve())')"
+require cargo
+xtask="$(bash scripts/xtask.sh --path)"
+export VPN233_XTASK_BIN="$xtask"
+candidates() { "$xtask" candidates "$1"; }
+release_dir="$("$xtask" release-dir)"
 cache_ticket=''; cache_finished=0; cache_engine="$(command -v bash)"
 cleanup_quick_cache() {
   local status=$?
   if [ "$quick" -eq 1 ] && [ "$cache_finished" -eq 0 ]; then
     if [ -n "$cache_ticket" ]; then
-      python scripts/quick-cache.py invalidate --flavor bash --engine "$cache_engine" --ticket "$cache_ticket" >/dev/null 2>&1 || true
+      "$xtask" quick-cache invalidate --flavor bash --engine "$cache_engine" --ticket "$cache_ticket" >/dev/null 2>&1 || true
     else
-      python scripts/quick-cache.py clear --flavor bash --engine "$cache_engine" >/dev/null 2>&1 || true
+      "$xtask" quick-cache clear --flavor bash --engine "$cache_engine" >/dev/null 2>&1 || true
     fi
   fi
   return "$status"
 }
 trap cleanup_quick_cache EXIT
 export CARGO_ENCODED_RUSTFLAGS
-CARGO_ENCODED_RUSTFLAGS="$(python scripts/build-environment.py)"
-step python scripts/release-version.py
-step python scripts/check-privacy.py
+CARGO_ENCODED_RUSTFLAGS="$("$xtask" build-environment)"
+step "$xtask" version
+step "$xtask" privacy
 step git diff --check
 if [ "$quick" -eq 0 ]; then
-  step python scripts/check-privacy.py --history
+  step "$xtask" privacy --history
   step gitleaks git --config .gitleaks.toml --redact --no-banner --exit-code 1
 else
-  step python scripts/check-privacy.py --history-only
+  step "$xtask" privacy --history-only
 fi
 if [ "$quick" -eq 1 ] && [ "$((no_quick_cache + skip_rust + skip_web + skip_scripts + skip_docs + skip_e2e + skip_audit))" -eq 0 ]; then
-  if cache_result="$(python scripts/quick-cache.py probe --flavor bash --engine "$cache_engine")"; then
-    read -r cache_hit cache_ticket cache_message < <(printf '%s' "$cache_result" | python -c 'import json,sys; r=json.load(sys.stdin); print(int(r["hit"]), r["ticket"] or "-", r["message"])')
+  if cache_result="$("$xtask" quick-cache probe --flavor bash --engine "$cache_engine")"; then
+    read -r cache_hit cache_ticket cache_message < <(printf '%s' "$cache_result" | "$xtask" cache-lines)
     printf '%s\n' "$cache_message"
     if [ "$cache_hit" -eq 1 ]; then
       cache_finished=1
@@ -61,10 +63,10 @@ if [ "$skip_rust" -eq 0 ]; then
   step cargo fmt --all -- --check
   step cargo clippy --locked --workspace --all-targets -- -D warnings
   step cargo test --locked --workspace
-  if [ "$quick" -eq 0 ]; then step cargo build --locked --release --workspace; fi
+  if [ "$quick" -eq 0 ]; then step cargo build --locked --release --workspace --exclude vpn233-xtask; fi
 fi
 if [ "$skip_web" -eq 0 ]; then
-  lock_hash="$(python -c 'import hashlib; from pathlib import Path; print(hashlib.sha256(Path("admin-web/package-lock.json").read_bytes()).hexdigest())')"
+  lock_hash="$("$xtask" sha256 admin-web/package-lock.json)"
   marker='admin-web/node_modules/.vpn233-lock.sha256'
   if [ "$quick" -eq 0 ] || [ ! -f "$marker" ] || [ "$(tr -d '\r\n' < "$marker")" != "$lock_hash" ]; then
     step npm ci --prefix admin-web --prefer-offline --no-audit
@@ -88,7 +90,6 @@ if [ "$skip_scripts" -eq 0 ]; then
   step pwsh -NoProfile -File scripts/tests/test-mirrors.ps1
   step pwsh -NoProfile -File scripts/tests/test-installers.ps1
   step pwsh -NoProfile -File scripts/tests/test-services.ps1
-  step python -m unittest discover -s scripts/tests -p 'test_*.py' -v
 fi
 if [ "$skip_docs" -eq 0 ]; then step bash scripts/e2e/check-docs.sh; fi
 if [ "$quick" -eq 0 ] && [ "$skip_audit" -eq 0 ]; then
@@ -101,7 +102,7 @@ if [ "$quick" -eq 0 ] && [ "$skip_e2e" -eq 0 ]; then
     fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/vpn233-core-fixtures.XXXXXXXX")"
     trap 'rm -rf -- "$fixture_dir"' EXIT
     cargo run --locked --quiet -p vpn233-core-lib-rust --example mihomo_fixtures -- "$fixture_dir"
-    python scripts/e2e/check_mihomo_parser.py --download-core --cache-dir .cache/tools/mihomo --provider-bin "$release_dir/vpn233-provider-server" --core-fixtures-dir "$fixture_dir"
+    "$xtask" network mihomo --download-core --cache-dir .cache/tools/mihomo --provider-bin "$release_dir/vpn233-provider-server" --core-fixtures-dir "$fixture_dir"
   )
   step check_official_parser
   BIN_DIR="$release_dir" step bash scripts/e2e/e2e.sh
@@ -113,11 +114,11 @@ if [ "$quick" -eq 0 ] && [ "$skip_e2e" -eq 0 ]; then
     Darwin:x86_64) platform=macos-x86_64; suffix='' ;;
     *) echo 'Unsupported local release packaging platform' >&2; exit 1 ;;
   esac
-  PLATFORM="$platform" TARGET=local EXE_SUFFIX="$suffix" VERSION="$(tr -d '\r\n' < version.txt)" TARGET_DIR="$release_dir" BUNDLE_ROOT=target/verify-package step bash .github/scripts/assemble-bundle.sh
+  PLATFORM="$platform" TARGET=local EXE_SUFFIX="$suffix" VERSION="$(tr -d '\r\n' < version.txt)" TARGET_DIR="$release_dir" BUNDLE_ROOT=target/verify-package/assets step bash .github/scripts/assemble-bundle.sh
 fi
 if [ -n "$cache_ticket" ]; then
-  if cache_result="$(python scripts/quick-cache.py store --flavor bash --engine "$cache_engine" --ticket "$cache_ticket" --checks "$checks" --elapsed "$((SECONDS - started))")"; then
-    printf '%s' "$cache_result" | python -c 'import json,sys; print(json.load(sys.stdin)["message"])'
+  if cache_result="$("$xtask" quick-cache store --flavor bash --engine "$cache_engine" --ticket "$cache_ticket" --checks "$checks" --elapsed "$((SECONDS - started))")"; then
+    printf '%s' "$cache_result" | "$xtask" json-field /message
   fi
   cache_finished=1
 fi

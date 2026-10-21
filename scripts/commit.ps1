@@ -22,7 +22,8 @@ try {
     }
     $stagedTree = git write-tree
     if ($LASTEXITCODE -ne 0) { throw 'Cannot snapshot the staged tree.' }
-    Invoke-Checked python @('scripts/check-privacy.py')
+    $xTask = & (Join-Path $PSScriptRoot 'xtask.ps1') -PathOnly
+    Invoke-Checked $xTask @('privacy')
     Invoke-Checked git @('diff', '--cached', '--check')
     $parameters = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/verify-all.ps1')
     if (-not $Push) { $parameters += '-Quick' }

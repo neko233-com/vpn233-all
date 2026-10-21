@@ -57,6 +57,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-all.ps1
 
 Quick verification skips release compilation, real service E2E and network dependency audits. Full verification and CI cover those gates plus installer tests, UI output, privacy, documentation and package checksums. [Testing and packaging](docs/testing.md).
 
+Verification, release tools and fixtures use the Rust `vpn233-xtask` workspace crate. No Python installation is required. GitHub Pages updates only after a fully successful stable release and skips unchanged documentation.
+
 ## Privacy
 
 Live configuration, subscription credentials, runtime data, logs and generated installers must stay out of Git and public bundles. Services contact only configured upstream subscriptions, provider registry and optional statistics relay; generated subscriptions have no default third-party latency probe. The admin UI uses same-origin assets and session-scoped authentication. Local traffic statistics may contain destination hosts when explicitly enabled; protect them as private data. [Privacy](docs/privacy.md).

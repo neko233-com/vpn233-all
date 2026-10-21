@@ -3,8 +3,8 @@
 #
 # Invoked by .github/workflows/release.yml on every build-matrix entry. The
 # script runs under Git Bash on Windows and under bash on Linux/macOS, so it
-# only uses portable shell plus coreutils/tar (and PowerShell for zip on
-# Windows).
+# uses portable shell for copying and the native Rust development tool for
+# deterministic archives, checksums, privacy and release verification.
 #
 # Required environment variables:
 #   PLATFORM      e.g. linux-x86_64
@@ -15,7 +15,7 @@
 #   BUNDLE_ROOT   output directory (default: "dist")
 #
 # Produces:
-#   dist/bundle/vpn233-rust-<platform>/...    bundle tree
+#   target/release-staging/vpn233-rust-<platform>/...    private staging tree
 #   dist/vpn233-rust-<platform>.tar.gz
 #   dist/vpn233-rust-<platform>.zip
 
@@ -35,7 +35,7 @@ case "$PLATFORM" in linux-x86_64|windows-x86_64|macos-x86_64|macos-aarch64) ;; *
 [[ "$BUNDLE_ROOT" =~ ^[A-Za-z0-9_./-]+$ && "$BUNDLE_ROOT" != /* && "/$BUNDLE_ROOT/" != *'/../'* ]] || { echo 'unsafe bundle output directory' >&2; exit 1; }
 
 BUNDLE_NAME="vpn233-rust-${PLATFORM}"
-BUNDLE_DIR="${BUNDLE_ROOT}/bundle/${BUNDLE_NAME}"
+BUNDLE_DIR="target/release-staging/${BUNDLE_NAME}"
 TARGET_DIR="${TARGET_DIR:-target/${TARGET}/release}"
 
 log() { printf '[bundle] %s\n' "$*"; }
@@ -43,10 +43,12 @@ die() { printf '[bundle] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -d "$TARGET_DIR" ] || die "missing Rust target directory: $TARGET_DIR"
 [ -f "admin-web/dist/index.html" ] || die "missing admin-web/dist/index.html; run npm ci && npm run build first"
-python scripts/release-version.py
+xtask="${VPN233_XTASK_BIN:-}"
+if [ -z "$xtask" ]; then xtask="$(bash scripts/xtask.sh --path)"; fi
+"$xtask" version
 [ "$(tr -d '\r\n' < version.txt)" = "$VERSION" ] || die 'bundle version differs from the shared version chain'
 
-python -c 'from pathlib import Path; import sys; root=Path.cwd().resolve(); target=Path(sys.argv[1]).resolve(); target.relative_to(root); assert target != root' "$BUNDLE_DIR"
+"$xtask" safe-output "$BUNDLE_DIR"
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR/bin" "$BUNDLE_DIR/examples" "$BUNDLE_DIR/admin-web" "$BUNDLE_DIR/docs" "$BUNDLE_DIR/scripts/lib"
 
@@ -97,28 +99,13 @@ fi
 
 # --- archives ------------------------------------------------------------
 mkdir -p "$BUNDLE_ROOT"
-SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}" python scripts/create-archives.py "$BUNDLE_DIR" "$BUNDLE_ROOT"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}" "$xtask" archive "$BUNDLE_DIR" "$BUNDLE_ROOT"
 log "wrote ${BUNDLE_ROOT}/${BUNDLE_NAME}.tar.gz"
 [ -f "${BUNDLE_ROOT}/${BUNDLE_NAME}.zip" ] || die "zip archive was not created"
 log "wrote ${BUNDLE_ROOT}/${BUNDLE_NAME}.zip"
 printf '%s\n' "$VERSION" > "$BUNDLE_ROOT/version.txt"
-# Python is already required by assembly and validation. macOS does not ship
-# GNU sha256sum, so generate the same standard manifest without extra packages.
-python - "$BUNDLE_ROOT" "$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME.zip" <<'PY'
-import hashlib
-from pathlib import Path
-import sys
-
-directory = Path(sys.argv[1])
-with (directory / "SHA256SUMS").open("w", encoding="ascii", newline="\n") as manifest:
-    for name in sys.argv[2:]:
-        digest = hashlib.sha256()
-        with (directory / name).open("rb") as archive:
-            for chunk in iter(lambda: archive.read(1024 * 1024), b""):
-                digest.update(chunk)
-        manifest.write(f"{digest.hexdigest()}  {name}\n")
-PY
-python scripts/verify-release.py "$BUNDLE_ROOT" "$VERSION" --partial
+"$xtask" checksums "$BUNDLE_ROOT" "$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME.zip"
+"$xtask" verify-release "$BUNDLE_ROOT" "$VERSION" --partial
 
 # --- summary -------------------------------------------------------------
 log "bundle contents:"

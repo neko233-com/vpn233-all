@@ -14,12 +14,16 @@
 [CmdletBinding()]
 param(
     [string]$BinDir = '',
+    [string]$WebDir = '',
     [switch]$Keep,
     [int]$TimeoutSeconds = 180
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+foreach ($key in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
+    [Environment]::SetEnvironmentVariable($key, $null, 'Process')
+}
 
 # --- paths and state -----------------------------------------------------
 $ScriptRoot = $PSScriptRoot
@@ -27,6 +31,9 @@ if ([string]::IsNullOrEmpty($ScriptRoot)) {
     $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 $RootDir = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
+$XtaskBinary = $env:VPN233_XTASK_BIN
+if ([string]::IsNullOrWhiteSpace($XtaskBinary)) { $XtaskBinary = Join-Path $RootDir 'target/debug/vpn233-xtask.exe' }
+if (-not (Test-Path -LiteralPath $XtaskBinary -PathType Leaf)) { throw 'Prebuild vpn233-xtask or set VPN233_XTASK_BIN before E2E' }
 if ([string]::IsNullOrEmpty($BinDir)) {
     $BinDir = Join-Path (Join-Path $RootDir 'target') 'release'
 }
@@ -36,10 +43,21 @@ $WorkDirUnix = $WorkDir.Replace('\', '/')
 $ConfigDir = Join-Path $WorkDir 'config'
 $LogDir = Join-Path $WorkDir 'logs'
 $DataDir = Join-Path $WorkDir 'data'
+$BuiltWebDir = $WebDir
+if ([string]::IsNullOrWhiteSpace($BuiltWebDir)) { $BuiltWebDir = Join-Path $RootDir 'admin-web/dist' }
 $WebDir = Join-Path $WorkDir 'web'
+$null = New-Item -ItemType Directory -Path $WorkDir
+$workspaceAcl = Get-Acl -LiteralPath $WorkDir
+$workspaceAcl.SetAccessRuleProtection($true, $false)
+foreach ($rule in @($workspaceAcl.Access)) { [void]$workspaceAcl.RemoveAccessRuleSpecific($rule) }
+$workspaceOwner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$workspaceAcl.SetOwner($workspaceOwner)
+foreach ($sid in @($workspaceOwner, (New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'), (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))) {
+    $workspaceAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+}
+Set-Acl -LiteralPath $WorkDir -AclObject $workspaceAcl
 $null = New-Item -ItemType Directory -Force -Path $ConfigDir, $LogDir, $DataDir, $WebDir
 $null = New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'subscribe'), (Join-Path $DataDir 'client')
-$BuiltWebDir = Join-Path $RootDir 'admin-web/dist'
 if (-not (Test-Path -LiteralPath (Join-Path $BuiltWebDir 'index.html'))) { throw 'Build admin-web before E2E; generated UI is required' }
 Copy-Item -Path (Join-Path $BuiltWebDir '*') -Destination $WebDir -Recurse
 
@@ -288,7 +306,7 @@ $ProviderPort = Get-FreePort
 $ClientSocksPort = Get-FreePort
 $ClientHttpPort = Get-FreePort
 $ClientWebPort = Get-FreePort
-$EchoPort = Get-FreePort
+$EchoPort = 0
 
 $SubscribeAdminPassword = 'sub-' + (Get-RandomHex -ByteCount 12)
 $ProviderAdminPassword = 'prov-' + (Get-RandomHex -ByteCount 12)
@@ -614,11 +632,22 @@ try {
     Step-End
 
     Step-Begin 'client proxy (SOCKS5 and HTTP)'
-    $echoScript = Join-Path (Join-Path $RootDir 'scripts') (Join-Path 'e2e' 'echo_server.ps1')
-    $null = Start-IsolatedProcess -FilePath 'powershell.exe' `
-        -Arguments ('-NoProfile -ExecutionPolicy Bypass -File "' + $echoScript + '" -Port ' + $EchoPort) `
+    $echoReady = Join-Path $WorkDir 'echo.ready'
+    $echoProcess = Start-IsolatedProcess -FilePath $XtaskBinary `
+        -Arguments ('network echo --port 0 --ready-file "' + $echoReady + '" --marker vpn233-e2e-echo') `
         -LogPath (Join-Path $LogDir 'echo.log')
-    if (-not (Wait-HttpReady -Url ($EchoBase + '/') -Seconds 20)) { throw 'echo server did not start' }
+    $echoDeadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $echoDeadline) {
+        if ($echoProcess.HasExited) { throw 'Rust echo fixture exited before readiness (private log retained locally)' }
+        if (Test-Path -LiteralPath $echoReady -PathType Leaf) {
+            $readyText = [System.IO.File]::ReadAllText($echoReady).Trim()
+            if ($readyText -match '^[1-9][0-9]{0,4}$' -and [int]$readyText -le 65535) { $EchoPort = [int]$readyText; break }
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    if ($EchoPort -eq 0) { throw 'Rust echo fixture readiness timed out' }
+    $EchoBase = 'http://127.0.0.1:' + $EchoPort
+    if (-not (Wait-HttpReady -Url ($EchoBase + '/') -Seconds 5)) { throw 'Rust echo server did not serve HTTP' }
 
     $curl = Get-Command -Name 'curl.exe' -ErrorAction SilentlyContinue
     if ($null -eq $curl) { throw 'curl.exe is required for the Windows E2E proxy checks' }

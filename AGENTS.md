@@ -71,3 +71,19 @@ lands in Git or in a release artifact is world-readable forever.
 - Documentation must describe what the code actually does. When a format,
   protocol, endpoint, CLI flag, or script argument changes, update the docs and
   the capability tables in the same change.
+
+## Verification and documentation publication
+
+- Repository verification, privacy, versioning, packaging and test fixtures
+  belong in the Rust `vpn233-xtask` workspace crate. Do not add Python tooling
+  or interpreter fallbacks. Drive the real Bash/PowerShell installers and the
+  existing browser UI tests from the verified toolchain.
+- Audit the complete affected execution chain before a coordinated change.
+  Preserve existing negative cases and run the combined verification gates.
+- GitHub Pages must not build or deploy on ordinary commits. Require a fully
+  successful stable release, including published-asset and public online
+  install/update checks; manual requests use the same release gates.
+- Reuse the verified release tool, check the exact release commit and skip
+  Jekyll/upload/deploy when the documentation tree has not changed. Verify
+  generated pages before publication and record the actual deployed release
+  commit and documentation tree, rather than the default-branch event SHA.

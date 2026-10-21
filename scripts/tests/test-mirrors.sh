@@ -365,14 +365,10 @@ assert_fail "sha256 rejects embedded whitespace" vpn233_sha256_matches "$SUM_FIL
 
 # Real curl/HTTP integration stays on loopback and exercises production code,
 # including truncation, matching/mismatched Range responses and source isolation.
-if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; assert sys.version_info >= (3, 10)' >/dev/null 2>&1; then
-  python3 "$SCRIPT_DIR/test-mirror-http.py"
-elif command -v python >/dev/null 2>&1 && python -c 'import sys; assert sys.version_info >= (3, 10)' >/dev/null 2>&1; then
-  python "$SCRIPT_DIR/test-mirror-http.py"
-else
-  printf 'test-mirrors: Python 3 is required for local HTTP integration tests.\n' >&2
-  exit 1
-fi
+XTASK="${VPN233_XTASK_BIN:-$SCRIPT_DIR/../../target/debug/vpn233-xtask}"
+if [[ ! -f "$XTASK" && -f "$XTASK.exe" ]]; then XTASK="$XTASK.exe"; fi
+[[ -f "$XTASK" ]] || { printf 'test-mirrors: prebuilt vpn233-xtask is required (VPN233_XTASK_BIN).\n' >&2; exit 1; }
+"$XTASK" network mirror-tests --shell sh --root "$SCRIPT_DIR/../.."
 
 # ---------------------------------------------------------------------------
 # Summary

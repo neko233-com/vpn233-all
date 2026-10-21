@@ -5,6 +5,8 @@ title: 快速验证与发布打包
 
 快速模式用于开发反馈，完整验证用于发布验收。缓存和产物复用减少重复编译，保留完整验收门槛。
 
+验证工具统一使用 Rust workspace 中的 `vpn233-xtask`，无需 Python。隐私扫描、版本链、归档、校验和、缓存、真实 HTTP 夹具和官方解析验收均由同一个原生工具完成；回归测试随 `cargo test --locked --workspace` 自动运行。安装脚本仍通过真实 Bash / PowerShell 执行，浏览器验收使用前端已有的 Node.js / Playwright。
+
 ```bash
 bash scripts/verify-all.sh --quick
 bash scripts/verify-all.sh --quick --no-quick-cache
@@ -23,11 +25,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-all.ps1
 
 缓存仅加速完整的 Quick 检查集合，显式跳过项标记部分验证。完整验证和 CI 始终执行真实检查，完全不使用 Quick 报告；Quick 报告不能作为发布通过或安全签名。
 
+脚本在独立的 `target/xtask-bootstrap` 构建开发工具，并把其实际二进制内容纳入缓存指纹。业务编译和测试使用各自 target，不会在一次缓存事务中改写验证工具。正式包仍只有三个业务程序，开发工具不随安装包分发。
+
 Quick 使用 Cargo 自身管理的锁定 crates 缓存，不逐次重扫用户全局 Cargo registry 或每个工具安装目录。手工修改这些全局安装内容后，应使用强制重跑选项；完整验证始终运行真实编译与测试。
 
 首次安装或更换前端依赖的 Quick 需要下一次依赖稳定的真实检查成功后才保存报告。设置自定义脚本启动文件、Node 启动选项或 Rust 编译包装器时保守禁用结果缓存。
 
-完整验证需仓库锁定版本的 Rust、Node.js 24、Python 3、Git、Bash、ShellCheck、actionlint、gitleaks、cargo-audit、PowerShell/PSScriptAnalyzer 和 OpenSSL，Linux 还需提供 `systemd-analyze` 的 systemd 工具包，缺少工具真实失败。安装器测试把用户服务目录隔离在临时 `XDG_CONFIG_HOME`，以受控管理器验证首装、重装归属与失败回滚，并在 Linux 使用真实 systemd 解析器验收生成单元。官方 Mihomo 解析门禁首次联网下载固定版本的公开内核归档，之后复用本地缓存，每次重新核对固定 SHA-256；下载或校验失败不会静默跳过。
+完整验证需仓库锁定版本的 Rust、Node.js 24、Git、Bash、ShellCheck、actionlint、gitleaks、cargo-audit、PowerShell/PSScriptAnalyzer 和 OpenSSL，Linux 还需提供 `systemd-analyze` 的 systemd 工具包，缺少工具真实失败。安装器测试把用户服务目录隔离在临时 `XDG_CONFIG_HOME`，以受控管理器验证首装、重装归属与失败回滚，并在 Linux 使用真实 systemd 解析器验收生成单元。官方 Mihomo 解析门禁首次联网下载固定版本的公开内核归档，之后复用本地缓存，每次重新核对固定 SHA-256；下载或校验失败不会静默跳过。
 
 | 层次 | 覆盖 |
 | --- | --- |
@@ -41,7 +45,7 @@ Quick 使用 Cargo 自身管理的锁定 crates 缓存，不逐次重扫用户�
 
 E2E 使用回环地址和合成凭据，不依赖真实代理节点。失败不打印私密日志或订阅响应。
 
-回环 HTTP 夹具直接绑定内核分配的端口并通过私有就绪文件交接，不执行主机名反向解析，避免 [macOS 运行器的 Python 反查停顿](https://github.com/actions/runner-images/issues/14409)。两种 macOS 原生 E2E 仍是发布必过项。
+Rust 回环 HTTP 夹具直接绑定内核分配的端口并通过私有就绪文件交接，不执行主机名反向解析。两端 E2E 使用同一实现，两种 macOS 原生 E2E 仍是发布必过项。
 
 浏览器回归使用 Playwright 驱动真实后台和本地订阅服务，覆盖登录失败/成功、会话存储、结构化节点显示、不同节点独立选择与取消保存、订阅链接与二维码、刷新、移动导航和退出；不替代每种客户端或公网代理协议的互通验证。
 
@@ -49,12 +53,16 @@ E2E 使用回环地址和合成凭据，不依赖真实代理节点。失败不�
 
 ```bash
 cargo run -p vpn233-core-lib-rust --example mihomo_fixtures --locked -- target/mihomo-fixtures
-python scripts/e2e/check_mihomo_parser.py --download-core --core-fixtures-dir target/mihomo-fixtures
+cargo xtask network mihomo --download-core --core-fixtures-dir target/mihomo-fixtures
 ```
 
 该命令需先有本机 release Provider 二进制，或用 `--provider-bin` 指定。所有代理端点使用合成占位内容，执行配置检查不会启动代理监听，也不会验证公网连通性。
 
-GitHub Pages 使用 `docs/_config.yml` 中的 `jekyll-relative-links`，在构建时把文档相对 `.md` 链接转换为页面地址，使 GitHub 仓库浏览和文档站共用同一套链接。该插件包含在 [GitHub Pages 支持依赖](https://pages.github.com/versions/) 中；用法见 [插件官方说明](https://github.com/benbalter/jekyll-relative-links)。文档源码链接检查通过与 Pages 实际构建通过是两个验收项。
+GitHub Pages 仅在正式发布整体成功后触发；手动入口也必须指定已通过的发布 run，使用同一套 Rust 门禁核准最新稳定标签、精确提交、全套 CI / E2E / 校验和、公开安装与在线升级。每次 main 提交仅检查文档源码，不启动 Jekyll 或部署。文档树与上次实际成功部署相同则跳过构建、上传和部署；发布前还需本地生成页面的隐私、链接、锚点和浏览器零外联检查。部署成功才写入真实发布提交和文档树证明，避免默认分支 SHA 混淆及迟到的旧版本回滚。
+
+CI 的已验证原生工具仅保存 7 天，Linux 上传前移除调试信息，两平台采用低级压缩；Pages 作业内临时复用工具仅保存 1 天。手动重试 Pages 时，同一 Release run 的已验证工具必须仍可下载，过期或缺失即失败，不从未验证源码重建。永久部署证明保存在 GitHub deployment 元数据中，不依赖这些短期工具产物。
+
+Pages 使用 `docs/_config.yml` 中的 `jekyll-relative-links`，在构建时把相对 `.md` 链接转换为页面地址，使仓库浏览和文档站共用同一套链接。该插件包含在 [GitHub Pages 支持依赖](https://pages.github.com/versions/) 中；用法见 [插件官方说明](https://github.com/benbalter/jekyll-relative-links)。
 
 版本由根 `Cargo.toml`、`version.txt`、前端包及 lockfile 同步，通过 `scripts/release.sh` / `scripts/release.ps1` 的 prepare 模式修改，按脚本帮助使用。仅维护 `main`。
 

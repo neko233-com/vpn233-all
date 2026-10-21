@@ -1,60 +1,188 @@
 name: Deploy docs
 
-# Build the long-form documentation in docs/ with Jekyll and publish it to
-# GitHub Pages. An administrator must enable the Pages site with
-# build_type=workflow once; the workflow token can build and deploy that site.
+# No commit-triggered Jekyll builds. Only a fully accepted stable Release can
+# reach Pages; unchanged docs skip both build and deployment.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "docs/**"
-      - ".github/workflows/docs.yml"
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
-
+    inputs:
+      release_run_id:
+        description: "Successful stable Release run ID; all normal gates still apply"
+        required: true
+        type: string
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
+  actions: read
+  deployments: read
 concurrency:
   group: pages
   cancel-in-progress: false
-
 jobs:
+  gate:
+    name: Verify stable release and documentation changes
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      deploy: ${{ steps.release.outputs.deploy }}
+      release_sha: ${{ steps.release.outputs.release_sha }}
+      docs_tree: ${{ steps.release.outputs.docs_tree }}
+      version: ${{ steps.release.outputs.version }}
+      release_run_id: ${{ steps.release.outputs.release_run_id }}
+    steps:
+      - name: Resolve only a successful official Release run
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id || inputs.release_run_id }}
+        run: |
+          [[ "$RELEASE_RUN_ID" =~ ^[0-9]+$ ]] && [ "${#RELEASE_RUN_ID}" -le 20 ] || {
+            echo 'Pages requires a numeric Release run ID' >&2; exit 1;
+          }
+          RUN_META="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID")"
+          printf '%s' "$RUN_META" | jq -e --arg repo "$GITHUB_REPOSITORY" --arg repo_id "$GITHUB_REPOSITORY_ID" '
+            .event == "push" and .path == ".github/workflows/release.yml" and
+            .status == "completed" and .conclusion == "success" and
+            .repository.full_name == $repo and (.repository.id | tostring) == $repo_id
+          ' >/dev/null
+          RELEASE_SHA="$(printf '%s' "$RUN_META" | jq -r '.head_sha')"
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid Release commit' >&2; exit 1; }
+          printf 'release_sha=%s\nrelease_run_id=%s\n' "$RELEASE_SHA" "$RELEASE_RUN_ID" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.resolve.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Restore the same Release run's tested and privacy-scanned tool
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verified-xtask-Linux
+          path: target/xtask-bootstrap/debug
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.resolve.outputs.release_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Select the verified native tool without compilation
+        run: |
+          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
+      - name: Require the latest complete stable release and compare docs trees
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_RUN_ID: ${{ steps.resolve.outputs.release_run_id }}
+        run: |
+          "$VPN233_XTASK_BIN" pages-gate --repo "$GITHUB_REPOSITORY" --run-id "$RELEASE_RUN_ID" --github-output "$GITHUB_OUTPUT"
+      - name: Reuse the gate binary without further compilation
+        if: steps.release.outputs.deploy == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: pages-verification-tool
+          path: target/xtask-bootstrap/debug/vpn233-xtask
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
   build:
-    name: Build Jekyll site
+    name: Build and verify changed documentation
+    needs: gate
+    if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      pages: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.gate.outputs.release_sha }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Verify documentation before building
-        run: bash scripts/e2e/check-docs.sh
-      - name: Configure Pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          enablement: true
+          name: pages-verification-tool
+          path: target/xtask-bootstrap/debug
+      - name: Select the verified Rust tool
+        run: |
+          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
+      - name: Verify exact release source before building
+        run: |
+          "$VPN233_XTASK_BIN" version
+          "$VPN233_XTASK_BIN" privacy
+          bash scripts/e2e/check-docs.sh
+      # An administrator enables the Pages site once with build_type=workflow.
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d
       - name: Build with Jekyll
-        uses: actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697 # v1.0.13
+        uses: actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697
         with:
           source: ./docs
           destination: ./_site
       - name: Scan generated site for private data
-        run: python scripts/check-privacy.py --artifacts _site --artifacts-only
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-
+        run: '"$VPN233_XTASK_BIN" privacy --artifacts _site --artifacts-only'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: admin-web/package-lock.json
+      - name: Verify local pages, links, anchors and zero external requests
+        run: |
+          npm ci --prefix admin-web --prefer-offline --no-audit
+          npx --prefix admin-web playwright install --with-deps chromium
+          node --test admin-web/scripts/docs-site-check.test.mjs
+          node admin-web/scripts/docs-site-check.mjs --root _site --baseurl "/${GITHUB_REPOSITORY#*/}"
+      - name: Upload fully checked Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          path: ./_site
   deploy:
-    name: Deploy to GitHub Pages
-    needs: build
+    name: Deploy verified documentation
+    needs: [gate, build]
+    if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.gate.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: pages-verification-tool
+          path: target/xtask-bootstrap/debug
+      - name: Select the verified Rust tool
+        run: |
+          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
+      - name: Recheck latest release immediately before deploying
+        id: recheck
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_RUN_ID: ${{ needs.gate.outputs.release_run_id }}
+        run: |
+          "$VPN233_XTASK_BIN" pages-gate --repo "$GITHUB_REPOSITORY" --run-id "$RELEASE_RUN_ID" --github-output "$GITHUB_OUTPUT"
       - name: Deploy to GitHub Pages
+        if: steps.recheck.outputs.deploy == 'true'
         id: deployment
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346
+      - name: Permanently record actual successful publication
+        if: steps.deployment.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_RUN_ID: ${{ needs.gate.outputs.release_run_id }}
+          RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
+          DOCS_TREE: ${{ needs.gate.outputs.docs_tree }}
+        run: |
+          "$VPN233_XTASK_BIN" pages-gate record --repo "$GITHUB_REPOSITORY" --run-id "$RELEASE_RUN_ID" --pages-run-id "$GITHUB_RUN_ID" --release-sha "$RELEASE_SHA" --docs-tree "$DOCS_TREE"

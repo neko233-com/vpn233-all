@@ -9,7 +9,7 @@
 # across restarts).
 #
 # This script never writes to the repository and never contacts a third party.
-# It needs: bash 4+, curl, python3 (or python / py), and the three release
+# It needs: bash 4+, curl, a prebuilt vpn233-xtask, and the three release
 # binaries in target/release (or BIN_DIR).
 #
 # Usage:
@@ -17,6 +17,8 @@
 #   BIN_DIR=/path/to/bin bash scripts/e2e/e2e.sh
 #   E2E_KEEP=1 bash scripts/e2e/e2e.sh   # keep the temp dir for debugging
 set -Eeuo pipefail
+umask 077
+unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BIN_DIR="${BIN_DIR:-$ROOT_DIR/target/release}"
@@ -29,8 +31,9 @@ RESP_BODY="$WORK_DIR/resp.body"
 RESP_HEADERS="$WORK_DIR/resp.headers"
 
 mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$DATA_DIR/subscribe" "$DATA_DIR/client" "$WEB_DIR"
-[ -f "$ROOT_DIR/admin-web/dist/index.html" ] || { echo 'Build admin-web before E2E; generated UI is required' >&2; exit 1; }
-cp -R "$ROOT_DIR/admin-web/dist/." "$WEB_DIR/"
+E2E_WEB_DIR="${E2E_WEB_DIR:-$ROOT_DIR/admin-web/dist}"
+[ -f "$E2E_WEB_DIR/index.html" ] || { echo 'Build admin-web before E2E; generated UI is required' >&2; exit 1; }
+cp -R "$E2E_WEB_DIR/." "$WEB_DIR/"
 
 PIDS=()
 STEP_NAMES=()
@@ -88,40 +91,17 @@ step_end() {
   printf '  ok (%s ms)\n' "$elapsed"
 }
 
-PYTHON=""
-for candidate in python3 python py; do
-  if command -v "$candidate" >/dev/null 2>&1 &&
-    "$candidate" -c 'import sys' >/dev/null 2>&1; then
-    PYTHON="$candidate"
-    break
-  fi
-done
-[ -n "$PYTHON" ] || fail "python3 is required to run the E2E suite (install Python 3.8+ or set PATH)"
+XTASK="${VPN233_XTASK_BIN:-$ROOT_DIR/target/debug/vpn233-xtask}"
+if [ ! -f "$XTASK" ] && [ -f "$XTASK.exe" ]; then XTASK="$XTASK.exe"; fi
+[ -f "$XTASK" ] || fail "prebuild vpn233-xtask or set VPN233_XTASK_BIN before E2E"
 
 random_hex() {
-  "$PYTHON" -c 'import secrets, sys; print(secrets.token_hex(int(sys.argv[1])))' "$1"
-}
-
-free_port() {
-  "$PYTHON" -c 'import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])
-s.close()'
+  "$XTASK" network e2e random-hex "$1"
 }
 
 json_get() {
-  # $1 = JSON document, $2 = Python expression over `data`
-  printf '%s' "$1" | VPN233_JSON_EXPR="$2" "$PYTHON" -c '
-import json, os, sys
-data = json.load(sys.stdin)
-namespace = {"data": data, "len": len, "any": any, "all": all, "int": int, "str": str}
-value = eval(os.environ["VPN233_JSON_EXPR"], {"__builtins__": {}}, namespace)
-if isinstance(value, bool):
-    print("true" if value else "false")
-else:
-    print(value)
-'
+  local document="$1"; shift
+  printf '%s' "$document" | "$XTASK" network e2e "$@"
 }
 
 http() {
@@ -210,11 +190,7 @@ SUBSCRIBE_BIN="$BIN_DIR/vpn233-subscribe-server${BIN_SUFFIX}"
 CLIENT_BIN="$BIN_DIR/vpn233-client${BIN_SUFFIX}"
 
 # --- ports and secrets ---------------------------------------------------
-SUB_PORT="$(free_port)"
-PROVIDER_PORT="$(free_port)"
-CLIENT_SOCKS_PORT="$(free_port)"
-CLIENT_HTTP_PORT="$(free_port)"
-CLIENT_WEB_PORT="$(free_port)"
+read -r SUB_PORT PROVIDER_PORT CLIENT_SOCKS_PORT CLIENT_HTTP_PORT CLIENT_WEB_PORT <<< "$("$XTASK" network e2e free-ports 5)"
 
 SUB_ADMIN_PASSWORD="sub-$(random_hex 12)"
 PROVIDER_ADMIN_PASSWORD="prov-$(random_hex 12)"
@@ -235,9 +211,9 @@ CLIENT_WEB_BASE="$(http_base "$CLIENT_WEB_PORT")"
 # --- test node links (only reserved example domains) ---------------------
 VLESS_LINK="vless://11111111-1111-4111-8111-111111111111@example.invalid:443?security=tls&type=ws&path=%2Fws&sni=example.invalid&fp=chrome#vless-e2e"
 VMESS_JSON='{"v":"2","ps":"vmess-e2e","add":"example.invalid","port":"443","id":"22222222-2222-4222-8222-222222222222","aid":"0","scy":"auto","net":"ws","type":"none","host":"example.invalid","path":"/ws","tls":"tls","sni":"example.invalid","fp":"chrome"}'
-VMESS_LINK="vmess://$(printf '%s' "$VMESS_JSON" | base64 | tr -d '\r\n')"
+VMESS_LINK="vmess://$(printf '%s' "$VMESS_JSON" | "$XTASK" network e2e base64-encode)"
 TROJAN_LINK="trojan://e2e-password@example.invalid:443?sni=example.invalid#trojan-e2e"
-SS_LINK="ss://$(printf '%s' 'aes-256-gcm:e2e-password' | base64 | tr -d '\r\n')@example.invalid:8388#ss-e2e"
+SS_LINK="ss://$(printf '%s' 'aes-256-gcm:e2e-password' | "$XTASK" network e2e base64-encode)@example.invalid:8388#ss-e2e"
 PROVIDER_NODE_LINK="vless://33333333-3333-4333-8333-333333333333@provider.example.invalid:443?security=tls&type=tcp&sni=provider.example.invalid#provider-e2e-node"
 
 # --- generate configuration ----------------------------------------------
@@ -355,7 +331,7 @@ AUTH=()
 body="$(printf '{"username":"admin","password":"%s"}' "$SUB_ADMIN_PASSWORD")"
 code="$(http POST "$SUB_BASE/api/auth/login" -H 'Content-Type: application/json' -d "$body")"
 assert_status 200 "$code" "admin login"
-ADMIN_JWT="$(json_get "$(cat "$RESP_BODY")" "data['token']")"
+ADMIN_JWT="$(json_get "$(cat "$RESP_BODY")" json-get /token)"
 [ -n "$ADMIN_JWT" ] || fail "admin login returned an empty token"
 AUTH=(-H "Authorization: Bearer $ADMIN_JWT")
 note "admin JWT acquired"
@@ -371,18 +347,18 @@ code="$(http GET "$SUB_BASE/api/v1/formats")"
 assert_status 200 "$code" "/api/v1/formats"
 assert_header_contains "content-type" "application/json" "/api/v1/formats"
 formats_body="$(cat "$RESP_BODY")"
-[ "$(json_get "$formats_body" "len(data['formats'])")" -ge 9 ] || fail "/api/v1/formats: expected at least 9 formats"
-[ "$(json_get "$formats_body" "'vless' in data['protocols']")" = "true" ] || fail "/api/v1/formats: vless missing from protocols"
+[ "$(json_get "$formats_body" json-length /formats)" -ge 9 ] || fail "/api/v1/formats: expected at least 9 formats"
+[ "$(json_get "$formats_body" json-contains /protocols vless)" = "true" ] || fail "/api/v1/formats: vless missing from protocols"
 
 code="$(http POST "$PROVIDER_BASE/api/v1/login" -H 'Content-Type: application/json' \
   -d "$(printf '{"username":"root","password":"%s"}' "$PROVIDER_ADMIN_PASSWORD")")"
 assert_status 200 "$code" "provider login"
-PROVIDER_JWT="$(json_get "$(cat "$RESP_BODY")" "data['token']")"
+PROVIDER_JWT="$(json_get "$(cat "$RESP_BODY")" json-get /token)"
 PROVIDER_AUTH=(-H "Authorization: Bearer $PROVIDER_JWT")
 
 code="$(http GET "$PROVIDER_BASE/api/v1/generate?format=json" "${PROVIDER_AUTH[@]}")"
 assert_status 200 "$code" "provider generate json"
-[ "$(json_get "$(cat "$RESP_BODY")" "len(data['node']['ports'])")" -ge 3 ] || fail "provider generate: fewer than 3 node ports"
+[ "$(json_get "$(cat "$RESP_BODY")" json-length /node/ports)" -ge 3 ] || fail "provider generate: fewer than 3 node ports"
 code="$(http GET "$PROVIDER_BASE/api/v1/generate.sh" "${PROVIDER_AUTH[@]}")"
 assert_status 200 "$code" "provider generate.sh"
 assert_body_contains "#!/usr/bin/env bash" "provider generate.sh"
@@ -401,24 +377,24 @@ code="$(http POST "$SUB_BASE/api/admin/accounts" "${AUTH[@]}" \
   -H 'Content-Type: application/json' \
   -d '{"username":"e2e-user","display_name":"E2E user"}')"
 assert_status 201 "$code" "create account"
-ACCOUNT_ID="$(json_get "$(cat "$RESP_BODY")" "data['account']['account_id']")"
+ACCOUNT_ID="$(json_get "$(cat "$RESP_BODY")" json-get /account/account_id)"
 [ -n "$ACCOUNT_ID" ] || fail "create account: empty account_id"
 
 code="$(http POST "$SUB_BASE/api/admin/accounts/$ACCOUNT_ID/links" "${AUTH[@]}" \
   -H 'Content-Type: application/json' \
   -d "$(printf '{"token":"%s","password":"%s","limit_bytes":104857600,"label":"e2e-primary"}' "$SUB_TOKEN" "$SUB_PASSWORD")")"
 assert_status 201 "$code" "create account link"
-LINKED_TOKEN="$(json_get "$(cat "$RESP_BODY")" "data['link']['token']")"
+LINKED_TOKEN="$(json_get "$(cat "$RESP_BODY")" json-get /link/token)"
 [ "$LINKED_TOKEN" = "$SUB_TOKEN" ] || fail "create account link: token mismatch"
 
 code="$(http POST "$SUB_BASE/api/admin/tokens/$SUB_TOKEN/link" "${AUTH[@]}")"
 assert_status 200 "$code" "create subscription access token"
-SUB_ACCESS="$(json_get "$(cat "$RESP_BODY")" "data['access_token']")"
+SUB_ACCESS="$(json_get "$(cat "$RESP_BODY")" json-get /access_token)"
 [ -n "$SUB_ACCESS" ] || fail "subscription access token is empty"
 
 code="$(http GET "$SUB_BASE/api/admin/accounts/$ACCOUNT_ID/links" "${AUTH[@]}")"
 assert_status 200 "$code" "list account links"
-[ "$(json_get "$(cat "$RESP_BODY")" "len(data['links'])")" -ge 1 ] || fail "account has no links"
+[ "$(json_get "$(cat "$RESP_BODY")" json-length /links)" -ge 1 ] || fail "account has no links"
 step_end
 
 # --- every subscription format ------------------------------------------
@@ -486,26 +462,23 @@ for format in "${FORMATS[@]}"; do
 
   case "$format" in
     singbox)
-      "$PYTHON" -m json.tool < "$RESP_BODY" >/dev/null 2>&1 || fail "format singbox: invalid JSON"
+      "$XTASK" network e2e validate-json < "$RESP_BODY" >/dev/null 2>&1 || fail "format singbox: invalid JSON"
       assert_body_contains '"outbounds"' "format singbox"
       ;;
     v2ray)
       decoded="$WORK_DIR/v2ray.decoded"
-      base64 -d < "$RESP_BODY" > "$decoded" 2>/dev/null || fail "format v2ray: body is not valid base64"
+      "$XTASK" network e2e base64-decode < "$RESP_BODY" > "$decoded" 2>/dev/null || fail "format v2ray: body is not valid base64"
       grep -qF '://' "$decoded" || fail "format v2ray: decoded body has no proxy links"
       ;;
     clash|stash)
       assert_body_contains 'proxies:' "format $format"
-      if "$PYTHON" -c 'import yaml' >/dev/null 2>&1; then
-        "$PYTHON" -c 'import sys, yaml; yaml.safe_load(sys.stdin)' < "$RESP_BODY" >/dev/null 2>&1 ||
-          fail "format $format: invalid YAML"
-      fi
+      "$XTASK" network e2e validate-yaml < "$RESP_BODY" >/dev/null 2>&1 || fail "format $format: invalid YAML"
       ;;
   esac
   if [ "$format" = v2ray ]; then
     grep -qF -- "$signature" "$decoded" || fail 'format v2ray: decoded syntax signature missing'
     grep -qF -- "$marker" "$decoded" || fail 'format v2ray: decoded protocol syntax marker missing'
-    "$PYTHON" -c 'import pathlib,re,sys; lines=pathlib.Path(sys.argv[1]).read_text().splitlines(); assert len(lines)==int(sys.argv[2]); assert all(re.match(r"^(vless|vmess|trojan|ss|ssr|hysteria2|hy2|tuic|anytls|socks5|socks|http|https)://", line) for line in lines)' "$decoded" "$node_count" 2>/dev/null || fail 'format v2ray: decoded link count/scheme does not match metadata'
+    "$XTASK" network e2e validate-links "$node_count" < "$decoded" 2>/dev/null || fail 'format v2ray: decoded link count/scheme does not match metadata'
   else
     assert_body_contains "$signature" "format $format"
     assert_body_contains "$marker" "format $format protocol marker"
@@ -537,7 +510,7 @@ code="$(http POST "$SUB_BASE/api/admin/accounts/$ACCOUNT_ID/links" "${AUTH[@]}" 
 assert_status 201 "$code" "create quota link"
 code="$(http POST "$SUB_BASE/api/admin/tokens/$QUOTA_TOKEN/link" "${AUTH[@]}")"
 assert_status 200 "$code" "quota access token"
-QUOTA_ACCESS="$(json_get "$(cat "$RESP_BODY")" "data['access_token']")"
+QUOTA_ACCESS="$(json_get "$(cat "$RESP_BODY")" json-get /access_token)"
 quota_hit=0
 attempt=1
 while [ "$attempt" -le 5 ]; do
@@ -569,8 +542,7 @@ deadline=$(( $(date +%s) + 40 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   code="$(http GET "$SUB_BASE/api/admin/providers" "${AUTH[@]}")"
   if [ "$code" = "200" ]; then
-    registry_online="$(json_get "$(cat "$RESP_BODY")" \
-      "any(p.get('provider_id') == 'e2e-provider' and p.get('online') and p.get('node_count', 0) > 0 for p in data['providers'])")"
+    registry_online="$(json_get "$(cat "$RESP_BODY")" provider-online e2e-provider)"
     if [ "$registry_online" = "true" ]; then
       break
     fi
@@ -598,7 +570,7 @@ step_end
 # --- client proxy --------------------------------------------------------
 step_begin "client proxy (SOCKS5 and HTTP)"
 ECHO_READY="$WORK_DIR/echo.ready"
-"$PYTHON" "$ROOT_DIR/scripts/e2e/echo_server.py" --port 0 --ready-file "$ECHO_READY" --marker "vpn233-e2e-echo" \
+"$XTASK" network echo --port 0 --ready-file "$ECHO_READY" --marker "vpn233-e2e-echo" \
   >"$LOG_DIR/echo.log" 2>&1 &
 ECHO_PID=$!
 PIDS+=("$ECHO_PID")
@@ -649,9 +621,9 @@ step_begin "client stats and privacy endpoints"
 code="$(http GET "$CLIENT_WEB_BASE/api/v1/stats" -u "root:$CLIENT_PASSWORD")"
 assert_status 200 "$code" "client stats"
 stats_body="$(cat "$RESP_BODY")"
-total_connections="$(json_get "$stats_body" "data['total_connections']")"
+total_connections="$(json_get "$stats_body" json-get /total_connections)"
 [ "$total_connections" -ge 2 ] || fail "client stats: total_connections=$total_connections, expected at least 2"
-domains="$(json_get "$stats_body" "len(data['domains'])")"
+domains="$(json_get "$stats_body" json-length /domains)"
 [ "$domains" -eq 0 ] || fail "client stats: record_domains=false but $domains domain(s) were recorded"
 
 code="$(http GET "$CLIENT_WEB_BASE/api/v1/stats")"
@@ -715,7 +687,7 @@ assert_body_contains "example.invalid" "subscription after restart"
 code="$(http POST "$SUB_BASE/api/auth/login" -H 'Content-Type: application/json' \
   -d "$(printf '{"username":"admin","password":"%s"}' "$SUB_ADMIN_PASSWORD")")"
 assert_status 200 "$code" "admin login after restart"
-RESTART_ADMIN_JWT="$(json_get "$(cat "$RESP_BODY")" "data['token']")"
+RESTART_ADMIN_JWT="$(json_get "$(cat "$RESP_BODY")" json-get /token)"
 note "token and admin credentials survived the restart"
 step_end
 step_begin 'privacy across restart (stdout and stderr)'
