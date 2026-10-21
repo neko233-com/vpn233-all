@@ -1,8 +1,8 @@
 name: Deploy docs
 
 # Build the long-form documentation in docs/ with Jekyll and publish it to
-# GitHub Pages. `enablement: true` lets the first run create the Pages site with
-# build_type=workflow even when Pages has never been enabled for the repository.
+# GitHub Pages. An administrator must enable the Pages site with
+# build_type=workflow once; the workflow token can build and deploy that site.
 on:
   push:
     branches:

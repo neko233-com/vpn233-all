@@ -102,7 +102,22 @@ log "wrote ${BUNDLE_ROOT}/${BUNDLE_NAME}.tar.gz"
 [ -f "${BUNDLE_ROOT}/${BUNDLE_NAME}.zip" ] || die "zip archive was not created"
 log "wrote ${BUNDLE_ROOT}/${BUNDLE_NAME}.zip"
 printf '%s\n' "$VERSION" > "$BUNDLE_ROOT/version.txt"
-(cd "$BUNDLE_ROOT" && sha256sum "$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME.zip" > SHA256SUMS)
+# Python is already required by assembly and validation. macOS does not ship
+# GNU sha256sum, so generate the same standard manifest without extra packages.
+python - "$BUNDLE_ROOT" "$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME.zip" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+directory = Path(sys.argv[1])
+with (directory / "SHA256SUMS").open("w", encoding="ascii", newline="\n") as manifest:
+    for name in sys.argv[2:]:
+        digest = hashlib.sha256()
+        with (directory / name).open("rb") as archive:
+            for chunk in iter(lambda: archive.read(1024 * 1024), b""):
+                digest.update(chunk)
+        manifest.write(f"{digest.hexdigest()}  {name}\n")
+PY
 python scripts/verify-release.py "$BUNDLE_ROOT" "$VERSION" --partial
 
 # --- summary -------------------------------------------------------------

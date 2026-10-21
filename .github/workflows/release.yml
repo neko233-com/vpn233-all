@@ -9,6 +9,8 @@ concurrency:
   cancel-in-progress: false
 env:
   CARGO_TERM_COLOR: always
+  HOMEBREW_NO_ANALYTICS: "1"
+  HOMEBREW_NO_AUTO_UPDATE: "1"
 jobs:
   preflight:
     name: Tag and version preflight
@@ -95,6 +97,45 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: cargo build --locked --release --workspace --target "$TARGET"
+      - name: Install Bash and portable GNU tools for macOS E2E
+        if: matrix.reuse == ''
+        shell: bash
+        run: |
+          brew install bash coreutils
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Verify macOS architecture, versions and real loopback E2E
+        if: matrix.reuse == ''
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+          export BIN_DIR="$PWD/target/$TARGET/release"
+          case "$TARGET" in
+            aarch64-apple-darwin) expected_arch=arm64 ;;
+            x86_64-apple-darwin) expected_arch=x86_64 ;;
+            *) echo 'Unsupported macOS target' >&2; exit 1 ;;
+          esac
+          for name in vpn233-provider-server vpn233-subscribe-server vpn233-client; do
+            test "$(lipo -archs "$BIN_DIR/$name")" = "$expected_arch"
+          done
+          case "$(uname -m):$TARGET" in
+            arm64:aarch64-apple-darwin|x86_64:x86_64-apple-darwin) ;;
+            arm64:x86_64-apple-darwin)
+              if ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+                echo '::warning title=macOS Intel runtime coverage::Rosetta unavailable: Intel binaries were cross-compiled and architecture checked; version/runtime E2E was not executed.'
+                printf '### macOS Intel: compile-only\n\nRosetta unavailable. Architecture checked; version/runtime E2E was not executed. Apple Silicon runtime validation remains mandatory.\n' >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              ;;
+            *) echo 'Apple Silicon runtime validation requires a native arm64 host' >&2; exit 1 ;;
+          esac
+          for name in vpn233-provider-server vpn233-subscribe-server vpn233-client; do
+            "$BIN_DIR/$name" --version
+          done
+          bash scripts/e2e/e2e.sh
+          printf '### %s runtime validation passed\n\nAll three binary version checks and the real loopback E2E suite passed.\n' "$TARGET" >> "$GITHUB_STEP_SUMMARY"
       - name: Assemble deterministic fast-compressed archives and verify privacy
         shell: bash
         env:

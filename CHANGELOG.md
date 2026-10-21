@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2.0.0 workspace)
+## [2.0.0] - 2026-10-21
 
 - Expand subscription imports to URI, Base64/Base64URL, Clash/Mihomo YAML and
   compatible sing-box JSON, preserving supported transport and TLS settings.
