@@ -26,6 +26,8 @@ jobs:
         with:
           path: .cache/xtask-bootstrap
           key: xtask-${{ runner.os }}-hostlatest-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
+          restore-keys: |
+            xtask-${{ runner.os }}-hostlatest-
       - name: Verify main ancestry and shared version
         run: |
           git merge-base --is-ancestor HEAD origin/main
@@ -107,6 +109,8 @@ jobs:
         with:
           path: .cache/xtask-bootstrap
           key: xtask-${{ runner.os }}-${{ matrix.platform }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
+          restore-keys: |
+            xtask-${{ runner.os }}-${{ matrix.platform }}-
       - name: Remap source and dependency paths for privacy
         if: matrix.reuse == ''
         shell: bash

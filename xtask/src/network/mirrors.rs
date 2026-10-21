@@ -3,7 +3,7 @@ use anyhow::{anyhow, bail, ensure, Result};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Cursor, Read, Write},
+    io::{self, Cursor, Read, Write},
     net::{Ipv4Addr, Shutdown, TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
@@ -13,6 +13,115 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+const CHILD_DEADLINE: Duration = Duration::from_secs(45);
+const IO_POLL: Duration = Duration::from_millis(100);
+
+struct ConnectionTrace {
+    phase: &'static str,
+    error: Option<io::ErrorKind>,
+    header_bytes: usize,
+    body_bytes: usize,
+    begin: Instant,
+    finished: Option<Duration>,
+}
+impl ConnectionTrace {
+    fn new() -> Self {
+        Self {
+            phase: "accepted",
+            error: None,
+            header_bytes: 0,
+            body_bytes: 0,
+            begin: Instant::now(),
+            finished: None,
+        }
+    }
+}
+
+// A nonblocking listening socket is needed for shutdown. Winsock accept inherits
+// that mode, so reset each accepted stream explicitly. Short socket polls let
+// stop interrupt idle clients without imposing an earlier fixture-only deadline.
+struct FixtureStream<'a> {
+    stream: TcpStream,
+    stop: &'a AtomicBool,
+    trace: &'a Mutex<ConnectionTrace>,
+    deadline: Instant,
+}
+impl<'a> FixtureStream<'a> {
+    fn new(
+        stream: TcpStream,
+        stop: &'a AtomicBool,
+        trace: &'a Mutex<ConnectionTrace>,
+        deadline: Instant,
+    ) -> io::Result<Self> {
+        stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(IO_POLL))?;
+        stream.set_write_timeout(Some(IO_POLL))?;
+        Ok(Self {
+            stream,
+            stop,
+            trace,
+            deadline,
+        })
+    }
+    fn check_deadline(&self) -> io::Result<()> {
+        if self.stop.load(Ordering::Relaxed) || Instant::now() >= self.deadline {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        Ok(())
+    }
+    fn phase(&self, phase: &'static str) {
+        self.trace.lock().unwrap().phase = phase;
+    }
+}
+impl Read for FixtureStream<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        loop {
+            self.check_deadline()?;
+            match self.stream.read(buffer) {
+                Ok(count) => {
+                    self.trace.lock().unwrap().header_bytes += count;
+                    return Ok(count);
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::TimedOut
+                            | io::ErrorKind::WouldBlock
+                            | io::ErrorKind::Interrupted
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+impl Write for FixtureStream<'_> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        loop {
+            self.check_deadline()?;
+            match self.stream.write(buffer) {
+                Ok(count) => {
+                    let mut trace = self.trace.lock().unwrap();
+                    if trace.phase == "response-body" {
+                        trace.body_bytes += count;
+                    }
+                    return Ok(count);
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::TimedOut
+                            | io::ErrorKind::WouldBlock
+                            | io::ErrorKind::Interrupted
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -31,6 +140,9 @@ struct Server {
     requests: Arc<Mutex<Vec<Request>>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<Vec<JoinHandle<()>>>>,
+    connections: Arc<Mutex<Vec<Arc<Mutex<ConnectionTrace>>>>>,
+    deadline: Arc<Mutex<Instant>>,
+    listener_error: Arc<Mutex<Option<io::ErrorKind>>>,
 }
 impl Server {
     fn new(kind: Kind, payload: Vec<u8>) -> Result<Self> {
@@ -41,23 +153,48 @@ impl Server {
         let stop = Arc::new(AtomicBool::new(false));
         let records = requests.clone();
         let stopping = stop.clone();
+        let connections = Arc::new(Mutex::new(Vec::new()));
+        let traces = connections.clone();
+        let deadline = Arc::new(Mutex::new(Instant::now() + CHILD_DEADLINE));
+        let expiration = deadline.clone();
+        let listener_error = Arc::new(Mutex::new(None));
+        let accept_error = listener_error.clone();
         let body = Arc::new(payload);
         let worker = thread::spawn(move || {
             let mut clients = Vec::new();
             while !stopping.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        let trace = Arc::new(Mutex::new(ConnectionTrace::new()));
+                        traces.lock().unwrap().push(trace.clone());
                         let records = records.clone();
                         let stopping = stopping.clone();
                         let body = body.clone();
+                        let deadline = *expiration.lock().unwrap();
                         clients.push(thread::spawn(move || {
-                            let _ = serve(stream, kind, &body, &records, &stopping);
+                            let result = FixtureStream::new(stream, &stopping, &trace, deadline)
+                                .map_err(anyhow::Error::from)
+                                .and_then(|stream| serve(stream, kind, &body, &records, &stopping));
+                            let mut trace = trace.lock().unwrap();
+                            if let Err(error) = result {
+                                trace.error = Some(
+                                    error
+                                        .downcast_ref::<io::Error>()
+                                        .map_or(io::ErrorKind::InvalidData, io::Error::kind),
+                                );
+                            } else {
+                                trace.phase = "complete";
+                            }
+                            trace.finished = Some(trace.begin.elapsed());
                         }));
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5))
                     }
-                    Err(_) => break,
+                    Err(error) => {
+                        *accept_error.lock().unwrap() = Some(error.kind());
+                        break;
+                    }
                 }
             }
             clients
@@ -67,10 +204,42 @@ impl Server {
             requests,
             stop,
             worker: Some(worker),
+            connections,
+            deadline,
+            listener_error,
         })
     }
     fn requests(&self) -> Vec<Request> {
         self.requests.lock().unwrap().clone()
+    }
+    fn begin_child(&self) -> Instant {
+        let begin = Instant::now();
+        *self.deadline.lock().unwrap() = begin + CHILD_DEADLINE;
+        begin
+    }
+    fn report(&self) {
+        let connections = self.connections.lock().unwrap();
+        let requests = self.requests();
+        eprintln!(
+            "mirror-http: server connections={} requests={} listener-error={:?}",
+            connections.len(),
+            requests.len(),
+            *self.listener_error.lock().unwrap()
+        );
+        for (index, trace) in connections.iter().enumerate() {
+            let trace = trace.lock().unwrap();
+            eprintln!("mirror-http: connection {:02} phase={} error={:?} header-bytes={} body-bytes={} elapsed-ms={}", index + 1, trace.phase, trace.error, trace.header_bytes, trace.body_bytes, trace.finished.unwrap_or_else(|| trace.begin.elapsed()).as_millis());
+        }
+        for (index, request) in requests.iter().enumerate() {
+            let route = controlled_route(&request.route);
+            eprintln!(
+                "mirror-http: request {:02} route={} offset={:?} identity={}",
+                index + 1,
+                route,
+                request.offset,
+                request.encoding.as_deref() == Some("identity")
+            );
+        }
     }
 }
 impl Drop for Server {
@@ -79,10 +248,44 @@ impl Drop for Server {
         if let Some(worker) = self.worker.take() {
             if let Ok(clients) = worker.join() {
                 for client in clients {
-                    let _ = client.join();
+                    if client.join().is_err() {
+                        eprintln!("mirror-http: fixture client worker panicked");
+                    }
                 }
+            } else {
+                eprintln!("mirror-http: fixture listener worker panicked");
             }
         }
+    }
+}
+
+fn controlled_route(route: &str) -> &'static str {
+    match route {
+        "resume" => "resume",
+        "resume-twice" => "resume-twice",
+        "chunked" => "chunked",
+        "complete-eof" => "complete-eof",
+        "no-range" => "no-range",
+        "bad-position" => "bad-position",
+        "missing-range" => "missing-range",
+        "range-416" => "range-416",
+        "changed" => "changed",
+        "wrong" => "wrong",
+        "good" => "good",
+        "bounded" => "bounded",
+        "slow" => "slow",
+        "reset" => "reset",
+        "resetafterfull" => "resetafterfull",
+        "wrongrange" => "wrongrange",
+        "wronglength" => "wronglength",
+        "changedtotal" => "changedtotal",
+        "encoded" => "encoded",
+        "oversized" => "oversized",
+        "unavailable" => "unavailable",
+        "alwaysshort" => "alwaysshort",
+        "stall" => "stall",
+        "trickle" => "trickle",
+        _ => "unknown",
     }
 }
 
@@ -97,20 +300,19 @@ fn stopped_sleep(stop: &AtomicBool, duration: Duration) {
 }
 
 fn serve(
-    mut stream: TcpStream,
+    mut stream: FixtureStream<'_>,
     kind: Kind,
     payload: &[u8],
     records: &Mutex<Vec<Request>>,
     stop: &AtomicBool,
 ) -> Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+    stream.phase("request-headers");
     let mut header = Vec::new();
     while !header.windows(4).any(|part| part == b"\r\n\r\n") {
         let mut buffer = [0; 1024];
         let count = stream.read(&mut buffer)?;
         if count == 0 {
-            return Ok(());
+            return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
         }
         header.extend_from_slice(&buffer[..count]);
         ensure!(header.len() < 32768, "fixture request too large");
@@ -191,6 +393,7 @@ fn serve(
         body.fill(b'x');
     }
     if route == "range-416" && offset.is_some() {
+        stream.phase("response-headers");
         stream.write_all(format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nContent-Range: bytes */{}\r\nConnection: close\r\n\r\n", body.len()).as_bytes())?;
         return Ok(());
     }
@@ -231,7 +434,9 @@ fn serve(
         response.push_str("Content-Encoding: gzip\r\n");
     }
     response.push_str("\r\n");
+    stream.phase("response-headers");
     stream.write_all(response.as_bytes())?;
+    stream.phase("response-body");
     if route == "stall" {
         stopped_sleep(stop, Duration::from_secs(5));
         return Ok(());
@@ -286,7 +491,7 @@ fn serve(
         })?;
     }
     stream.flush()?;
-    let _ = stream.shutdown(Shutdown::Both);
+    let _ = stream.stream.shutdown(Shutdown::Both);
     Ok(())
 }
 
@@ -395,17 +600,30 @@ impl Case<'_> {
                 );
             }
             command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]);
+            let script = temp.path().join("receive.ps1");
+            private_write(&script, br#"param([string]$Library,[string]$Destination,[switch]$NoHash,[string]$Installer,[string]$Prefix)
+$ErrorActionPreference='Stop'
+[Console]::Out.WriteLine(('VPN233_HTTP_RUNTIME=' + $PSVersionTable.PSVersion.ToString()))
+[Console]::Out.WriteLine('VPN233_HTTP_STAGE=library')
+if($Installer){
+    [Console]::Out.WriteLine('VPN233_HTTP_STAGE=installer')
+    & $Installer -Release -Version '2.1.0' -Prefix $Prefix -NoStart -Mirror auto
+}else{
+    . $Library
+    [Console]::Out.WriteLine('VPN233_HTTP_STAGE=transfer')
+    if($NoHash){Receive-Vpn233ReleaseAsset fixture.bin $Destination '2.1.0' -Quiet -WarningAction SilentlyContinue}else{Receive-Vpn233ReleaseAsset fixture.bin $Destination '2.1.0' -ExpectedSha256 $env:VPN233_TEST_DIGEST -Quiet -WarningAction SilentlyContinue}
+}
+[Console]::Out.WriteLine('VPN233_HTTP_STAGE=complete')
+"#)?;
+            command.arg(script);
             if installer {
                 command
+                    .arg("-Installer")
                     .arg(self.root.join("install.ps1"))
-                    .args(["-Release", "-Version", "2.1.0", "-Prefix"])
-                    .arg(temp.path().join("installed"))
-                    .args(["-NoStart", "-Mirror", "auto"]);
+                    .arg("-Prefix")
+                    .arg(temp.path().join("installed"));
             } else {
-                let script = temp.path().join("receive.ps1");
-                private_write(&script, b"param([string]$Library,[string]$Destination,[switch]$NoHash)\n$ErrorActionPreference='Stop'\n. $Library\nif($NoHash){Receive-Vpn233ReleaseAsset fixture.bin $Destination '2.1.0' -Quiet -WarningAction SilentlyContinue}else{Receive-Vpn233ReleaseAsset fixture.bin $Destination '2.1.0' -ExpectedSha256 $env:VPN233_TEST_DIGEST -Quiet -WarningAction SilentlyContinue}\n")?;
                 command
-                    .arg(script)
                     .arg("-Library")
                     .arg(self.root.join("scripts/lib/mirrors.ps1"))
                     .arg("-Destination")
@@ -415,74 +633,105 @@ impl Case<'_> {
                 }
             }
         }
-        let begin = Instant::now();
+        let begin = server.begin_child();
         self.stage.set("child-process");
-        let output = crate::support::process_output(&mut command, None, Duration::from_secs(45))
-            .map_err(|_| {
-                anyhow!("controlled HTTP downloader process exceeded deadline or could not start")
-            })?;
+        let output = match crate::support::process_output(&mut command, None, CHILD_DEADLINE) {
+            Ok(output) => output,
+            Err(_) => {
+                eprintln!(
+                    "mirror-http: child execution failed elapsed-ms={}",
+                    begin.elapsed().as_millis()
+                );
+                server.report();
+                bail!("controlled HTTP downloader process exceeded deadline or could not start");
+            }
+        };
         let elapsed = begin.elapsed();
-        self.stage.set("child-outcome");
-        ensure!(
-            output.status.success() == success,
-            "controlled {:?} HTTP transfer outcome differs; private output withheld",
-            if self.kind == Kind::Sh { "SH" } else { "PS" }
-        );
-        let text = [output.stdout.as_slice(), output.stderr.as_slice()].concat();
-        self.stage.set("log-privacy");
-        ensure!(
-            !text
-                .windows(prefixes[0].len())
-                .any(|window| window == prefixes[0].as_bytes()),
-            "controlled downloader leaked a request URL"
-        );
-        for entry in fs::read_dir(temp.path())? {
-            let name = entry?.file_name().to_string_lossy().into_owned();
+        let result = (|| {
+            self.stage.set("child-outcome");
             ensure!(
-                !name.contains(".part"),
-                "partial file survived source cleanup"
+                output.status.success() == success,
+                "controlled {:?} HTTP transfer outcome differs; private output withheld",
+                if self.kind == Kind::Sh { "SH" } else { "PS" }
             );
-        }
-        if success {
-            self.stage.set("verified-content");
-            if installer {
+            let text = [output.stdout.as_slice(), output.stderr.as_slice()].concat();
+            self.stage.set("log-privacy");
+            ensure!(
+                !text
+                    .windows(prefixes[0].len())
+                    .any(|window| window == prefixes[0].as_bytes()),
+                "controlled downloader leaked a request URL"
+            );
+            for entry in fs::read_dir(temp.path())? {
+                let name = entry?.file_name().to_string_lossy().into_owned();
                 ensure!(
-                    temp.path()
-                        .join("installed/bin/vpn233-provider-server.exe")
-                        .is_file(),
-                    "real installer did not install verified fixture"
-                );
-            } else {
-                ensure!(
-                    fs::read(&destination)? == payload,
-                    "verified output bytes differ"
+                    !name.contains(".part"),
+                    "partial file survived source cleanup"
                 );
             }
-            ensure!(
-                fs::read_to_string(&cache)?.trim()
-                    == format!("release {}", prefixes.last().unwrap()),
-                "unverified mirror was cached"
-            );
-        } else {
-            self.stage.set("failure-preservation");
-            ensure!(
-                fs::read(&destination)? == b"synthetic prior destination",
-                "failed transfer replaced previous destination"
-            );
-            if prior_cache {
+            if success {
+                self.stage.set("verified-content");
+                if installer {
+                    ensure!(
+                        temp.path()
+                            .join("installed/bin/vpn233-provider-server.exe")
+                            .is_file(),
+                        "real installer did not install verified fixture"
+                    );
+                } else {
+                    ensure!(
+                        fs::read(&destination)? == payload,
+                        "verified output bytes differ"
+                    );
+                }
                 ensure!(
-                    fs::read_to_string(cache)? == previous,
-                    "failed transfer changed previous cache"
+                    fs::read_to_string(&cache)?.trim()
+                        == format!("release {}", prefixes.last().unwrap()),
+                    "unverified mirror was cached"
                 );
             } else {
-                ensure!(!cache.exists(), "failed mirror cached");
+                self.stage.set("failure-preservation");
+                ensure!(
+                    fs::read(&destination)? == b"synthetic prior destination",
+                    "failed transfer replaced previous destination"
+                );
+                if prior_cache {
+                    ensure!(
+                        fs::read_to_string(cache)? == previous,
+                        "failed transfer changed previous cache"
+                    );
+                } else {
+                    ensure!(!cache.exists(), "failed mirror cached");
+                }
             }
+            self.stage.set("response-assertions");
+            Ok(Transfer {
+                requests: server.requests(),
+                elapsed,
+            })
+        })();
+        if result.is_err() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let runtime = text
+                .lines()
+                .filter_map(|line| line.strip_prefix("VPN233_HTTP_RUNTIME="))
+                .find(|value| {
+                    !value.is_empty()
+                        && value.len() <= 64
+                        && value
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || byte == b'.')
+                })
+                .unwrap_or("unavailable");
+            let stage = text
+                .lines()
+                .filter_map(|line| line.strip_prefix("VPN233_HTTP_STAGE="))
+                .rfind(|value| ["library", "transfer", "installer", "complete"].contains(value))
+                .unwrap_or("unavailable");
+            eprintln!("mirror-http: child runtime={} phase={} exit={:?} expected-success={} elapsed-ms={} stdout-bytes={} stderr-bytes={}", runtime, stage, output.status.code(), success, elapsed.as_millis(), output.stdout.len(), output.stderr.len());
+            server.report();
         }
-        self.stage.set("response-assertions");
-        Ok(Transfer {
-            requests: server.requests(),
-            elapsed,
-        })
+        result
     }
 }
 
@@ -848,6 +1097,61 @@ fn ps(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wait_for_connection(server: &Server) {
+        let begin = Instant::now();
+        while server.connections.lock().unwrap().is_empty() {
+            assert!(
+                begin.elapsed() < Duration::from_secs(5),
+                "loopback connection was not accepted"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn accepted_connections_wait_for_delayed_headers_within_client_budget() {
+        // 100ms exposes inherited Winsock nonblocking mode; 3200ms also
+        // exceeds the former fixture-only timeout while fitting the real 4s.
+        for delay in [100, 3200] {
+            let payload = b"synthetic delayed-header fixture";
+            let server = Server::new(Kind::Ps, payload.to_vec()).unwrap();
+            let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port)).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(4)))
+                .unwrap();
+            wait_for_connection(&server);
+            let begin = Instant::now();
+            thread::sleep(Duration::from_millis(delay));
+            client
+                .write_all(
+                    b"GET /good/fixture HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            let mut response = Vec::new();
+            client.read_to_end(&mut response).unwrap();
+            assert!(
+                begin.elapsed() < Duration::from_secs(4),
+                "valid delayed headers exceeded client budget"
+            );
+            assert!(response.starts_with(b"HTTP/1.1 200"));
+            assert!(response.ends_with(payload));
+            assert_eq!(server.requests().len(), 1);
+        }
+    }
+
+    #[test]
+    fn stopping_fixture_interrupts_an_accepted_idle_connection() {
+        let server = Server::new(Kind::Ps, b"synthetic idle fixture".to_vec()).unwrap();
+        let _client = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port)).unwrap();
+        wait_for_connection(&server);
+        let begin = Instant::now();
+        drop(server);
+        assert!(
+            begin.elapsed() < Duration::from_secs(1),
+            "fixture stop did not interrupt idle IO"
+        );
+    }
 
     #[test]
     fn explicit_roots_normalize_before_native_file_access() {

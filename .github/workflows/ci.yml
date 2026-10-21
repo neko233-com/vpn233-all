@@ -41,6 +41,8 @@ jobs:
         with:
           path: .cache/xtask-bootstrap
           key: xtask-${{ runner.os }}-${{ matrix.cache }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
+          restore-keys: |
+            xtask-${{ runner.os }}-${{ matrix.cache }}-
       - name: Build Rust verification tool once
         shell: bash
         run: |
