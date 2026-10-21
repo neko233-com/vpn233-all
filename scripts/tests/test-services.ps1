@@ -78,6 +78,13 @@ try {
     & (Join-Path $repository 'start.ps1') -InstallDir $work
     Assert-True 'runtime start launches three binaries from saved custom directory' ($global:Vpn233RuntimeTestState.Started.Count -eq 3 -and @($global:Vpn233RuntimeTestState.Started | Where-Object { -not $_.Binary.StartsWith($customBin) }).Count -eq 0)
     Assert-True 'runtime start uses saved external config paths' (@($global:Vpn233RuntimeTestState.Started | Where-Object { -not $_.Arguments.Contains($customConfig) }).Count -eq 0)
+    if ($env:OS -ne 'Windows_NT') {
+        foreach ($directory in @('runtime', 'logs')) {
+            Assert-True ('private ' + $directory + ' directory is mode 700') (([int][IO.File]::GetUnixFileMode((Join-Path $work $directory))) -eq 448)
+        }
+        $stateFiles = @(Get-ChildItem -LiteralPath (Join-Path $work 'runtime') -File)
+        Assert-True 'all PID and identity files are mode 600' ($stateFiles.Count -eq 6 -and @($stateFiles | Where-Object { ([int][IO.File]::GetUnixFileMode($_.FullName)) -ne 384 }).Count -eq 0)
+    }
     Write-Host ('test-services.ps1: ' + $script:passed + ' passed')
 } finally {
     $env:VPN233_BIN_DIR = $previousBin

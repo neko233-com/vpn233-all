@@ -11,16 +11,22 @@ $binaryDir = if ($env:VPN233_BIN_DIR) { $env:VPN233_BIN_DIR } elseif ($layout) {
 $configDir = if ($env:VPN233_CONFIG_DIR) { $env:VPN233_CONFIG_DIR } elseif ($layout) { $layout['config'] } else { Join-Path $base 'config' }
 $runDir = Join-Path $base 'runtime'
 $logDir = Join-Path $base 'logs'
+$windowsRuntime = $env:OS -eq 'Windows_NT'
 $null = New-Item -ItemType Directory -Force -Path $runDir, $logDir
 foreach ($privateDirectory in @($runDir, $logDir)) {
-    $acl = Get-Acl -LiteralPath $privateDirectory
-    $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')
-    $unexpected = @($acl.Access | Where-Object { $_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowed })
-    if (-not $acl.AreAccessRulesProtected -or $unexpected.Count) {
-        $acl.SetAccessRuleProtection($true, $false)
-        foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleSpecific($rule) }
-        foreach ($sid in $allowed) { $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier $sid), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
-        Set-Acl -LiteralPath $privateDirectory -AclObject $acl
+    if ($windowsRuntime) {
+        $acl = Get-Acl -LiteralPath $privateDirectory
+        $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')
+        $unexpected = @($acl.Access | Where-Object { $_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowed })
+        if (-not $acl.AreAccessRulesProtected -or $unexpected.Count) {
+            $acl.SetAccessRuleProtection($true, $false)
+            foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleSpecific($rule) }
+            foreach ($sid in $allowed) { $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier $sid), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
+            Set-Acl -LiteralPath $privateDirectory -AclObject $acl
+        }
+    } else {
+        & chmod 700 -- $privateDirectory
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to protect private process directories.' }
     }
 }
 $services = @{'provider-server' = 'vpn233-provider-server'; 'subscribe-server' = 'vpn233-subscribe-server'; 'vpn233-client' = 'vpn233-client'}
@@ -53,6 +59,12 @@ foreach ($name in $services.Keys) {
     $process = Start-Process -FilePath $binary -ArgumentList @('--config', ('"' + $config + '"')) -WorkingDirectory $base -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDir ($name + '.out.log')) -RedirectStandardError (Join-Path $logDir ($name + '.err.log'))
     Set-Content -LiteralPath $pidFile -Value $process.Id -Encoding ASCII
     Set-Content -LiteralPath ($pidFile + '.identity') -Value $process.StartTime.ToUniversalTime().Ticks -Encoding ASCII
+    if (-not $windowsRuntime) {
+        foreach ($stateFile in @($pidFile, ($pidFile + '.identity'))) {
+            & chmod 600 -- $stateFile
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to protect private process identity records.' }
+        }
+    }
     Start-Sleep -Milliseconds 100
     $process.Refresh()
     if ($process.HasExited) { throw 'A VPN233 process exited during startup. Inspect private logs locally.' }
