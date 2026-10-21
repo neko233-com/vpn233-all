@@ -27,6 +27,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-all.ps1
 
 脚本在独立的 `.cache/xtask-bootstrap` 构建开发工具，并把其实际二进制内容纳入缓存指纹。该目录位于业务 `target/` 之外，避免 Rust 依赖缓存恢复或清理时删除仍需执行的工具。业务编译和测试不会在一次缓存事务中改写验证工具。workspace 测试统一使用 `--no-fail-fast`，单个测试目标失败后仍收齐其余目标，最终保留非零失败状态。正式包仍只有三个业务程序，开发工具不随安装包分发。
 
+PowerShell 构建入口只在 Cargo 子进程中移除产品编译标志，调用者环境保持原样，兼容 PowerShell 5.1 与新版 PowerShell 对空环境变量的不同处理方式。
+
 开发构建仅为压缩与哈希热路径依赖 `zlib-rs`、`sha2` 设置包级 `opt-level = 3`，减少纯 Rust 工具处理归档的耗时；其余开发和发布 profile 保持既有设置。CI 与发布的原生工具编译缓存同时包含根 `Cargo.toml`、锁文件、工具链和工具源码的内容指纹，修改这些优化配置会重新构建工具，完整验证仍执行全部真实检查。
 
 原生工具缓存未精确命中时，仅回退到相同运行器系统与平台前缀：Linux CI 的 glibc 2.35 基线、Windows MSVC 作业、发布预检的最新 Linux 主机及两种 macOS 架构彼此隔离。回退只复用依赖编译产物，每次入口仍执行 `cargo build --locked`，由 Cargo 核对当前源码、锁文件、编译器与配置并重建需要更新的部分；隐私扫描和测试照常运行，不把编译缓存当作验证结果。
@@ -52,6 +54,8 @@ E2E 使用回环地址和合成凭据，不依赖真实代理节点。失败不�
 完整验证和 CI 的平台 E2E 还使用已经构建并校验的公开包执行离线安装生命周期：调用真实安装脚本，再由真实 `start` 启动三个业务程序，检查回环健康、前端、Provider 和订阅，核对进程身份后停止并确认监听关闭。Windows 使用实际 PowerShell 5.1，不以模拟 `Start-Process` 或休眠进程替代业务程序；该检查复用现成二进制和前端，不重复编译或重跑已有的完整 14 组 E2E，也不能替代发布后的真实联网安装升级。失败只打印固定阶段和受控错误类型，不输出路径、URL、配置或日志正文。
 
 已生成并校验平台归档后，可用 `cargo xtask network installed-lifecycle --assets target/verify-package/assets --tag v版本号` 单独执行这项离线检查。`--assets` 指定包含平台归档、`SHA256SUMS` 和 `version.txt` 的目录，工具消费校验后的归档，不接受已解包的安装目录替代。其结果明确标记 `online_installation_verified: false`。
+
+Windows 进程身份通过 Rust 直接查询内核句柄、可执行文件和创建时间，并持有原实例句柄直到停止后确认其已退出，避免额外 PowerShell 查询的启动成本及 PID 重用歧义。PS5 参数回归单独执行三个实际脚本的原生 `-File` 入口并在目录解析后退出；完整业务启停由上述真实安装生命周期验证。辅助脚本使用统一有界执行期限，不把某台运行器的冷启动速度当作产品行为断言。
 
 离线与公开客户测试仅在合成临时 Provider 配置中把心跳周期设为 1 秒，减少等待注册的耗时；业务程序的生产默认值仍是 30 秒。
 

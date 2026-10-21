@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $work = Join-Path ([IO.Path]::GetTempPath()) ('vpn233-mirrors-test-' + [guid]::NewGuid().ToString('N'))
 $variables = @('VPN233_HOME', 'VPN233_GH_MIRROR', 'VPN233_GH_MIRRORS', 'VPN233_NO_MIRROR', 'VPN233_MIRROR_MODE')
 $saved = @{}
-foreach ($variable in $variables) { $saved[$variable] = [Environment]::GetEnvironmentVariable($variable); [Environment]::SetEnvironmentVariable($variable, $null) }
+foreach ($variable in $variables) { $saved[$variable] = @{ Present = (Test-Path -LiteralPath ('Env:' + $variable)); Value = [Environment]::GetEnvironmentVariable($variable, 'Process') } }
 New-Item -ItemType Directory -Path $work | Out-Null
 $script:passed = 0
 function Assert-Equal {
@@ -20,6 +20,7 @@ function Assert-Rejected {
     Assert-Equal $Name $true $rejected
 }
 try {
+    foreach ($variable in $variables) { if (Test-Path -LiteralPath ('Env:' + $variable)) { Remove-Item -LiteralPath ('Env:' + $variable) } }
     $env:VPN233_HOME = Join-Path $work 'home'
     Assert-Equal 'contract and direct fallback' 'https://ghproxy.net/|https://gh.llkk.cc/|https://ghfast.top/|https://gh-proxy.com/|' ((Get-Vpn233MirrorPrefixes) -join '|')
     Assert-Equal 'latest URL' 'https://github.com/neko233-com/vpn233-all/releases/latest/download/SHA256SUMS' (Get-Vpn233ReleaseUrl SHA256SUMS)
@@ -72,6 +73,9 @@ try {
     Assert-Equal 'no failed download parts left' 0 @(Get-ChildItem -LiteralPath $work -Filter '*.part').Count
     Write-Host ('test-mirrors.ps1: ' + $script:passed + ' passed')
 } finally {
-    foreach ($variable in $variables) { [Environment]::SetEnvironmentVariable($variable, $saved[$variable]) }
+    foreach ($variable in $variables) {
+        if ($saved[$variable].Present) { Set-Item -LiteralPath ('Env:' + $variable) -Value $saved[$variable].Value }
+        elseif (Test-Path -LiteralPath ('Env:' + $variable)) { Remove-Item -LiteralPath ('Env:' + $variable) }
+    }
     Remove-Item -LiteralPath $work -Recurse -Force
 }

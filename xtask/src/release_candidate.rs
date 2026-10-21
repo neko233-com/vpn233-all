@@ -14,6 +14,7 @@ use std::{
 };
 
 const PROMOTION: &str = "Promote accepted release";
+const RELEASE_LIST_PAGES: usize = 10;
 type Assets = BTreeMap<String, (u64, String)>;
 type AssetIds = BTreeMap<String, u64>;
 
@@ -161,10 +162,30 @@ fn validate_run(api: &impl Api, repo: &str, tag: &str, sha: &str, run_id: u64) -
 }
 fn ensure_new(api: &impl Api, repo: &str, tag: &str, sha: &str, run_id: u64) -> Result<()> {
     validate_run(api, repo, tag, sha, run_id)?;
-    match api.get(&format!("/releases/tags/{tag}")) {
-        Err(error) if error.downcast_ref::<ApiNotFound>().is_some() => Ok(()),
-        _ => bail!("candidate-existing-release-or-unavailable-api"),
+    // The by-tag endpoint exposes published releases, never drafts. An
+    // authenticated list is required to reject either kind before upload.
+    for page in 1..=RELEASE_LIST_PAGES {
+        let listing = api.get(&format!("/releases?per_page=100&page={page}"))?;
+        let releases = listing
+            .as_array()
+            .ok_or_else(|| anyhow!("candidate-release-list-invalid"))?;
+        ensure!(
+            releases.len() <= 100,
+            "candidate-release-list-page-too-large"
+        );
+        for release in releases {
+            let name = release["tag_name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| anyhow!("candidate-release-list-tag-missing"))?;
+            id(release)?;
+            ensure!(name != tag, "candidate-release-already-exists");
+        }
+        if releases.len() < 100 {
+            return Ok(());
+        }
     }
+    bail!("candidate-release-list-pagination-limit")
 }
 fn candidate_proof(
     repo: &str,
@@ -183,16 +204,19 @@ fn publish(
     tag: &str,
     sha: &str,
     run_id: u64,
+    release_id: u64,
     expected: &Assets,
 ) -> Result<Value> {
+    ensure!(release_id > 0, "candidate-draft-release-id-required");
     validate_run(api, repo, tag, sha, run_id)?;
-    let draft = api.get(&format!("/releases/tags/{tag}"))?;
+    // The pinned upload action provides this ID even while the draft cannot be
+    // discovered through GET /releases/tags/{tag}.
+    let draft = api.get(&format!("/releases/{release_id}"))?;
     phase(&draft, tag, true, true)?;
     ensure!(
-        assets(&draft)? == *expected,
+        id(&draft)? == release_id && assets(&draft)? == *expected,
         "candidate-draft-assets-differ"
     );
-    let release_id = id(&draft)?;
     let expected_ids = asset_ids(&draft)?;
     let changed = api.patch(
         &format!("/releases/{release_id}"),
@@ -416,8 +440,16 @@ pub fn run(args: &[String]) -> Result<()> {
     for pair in args[1..].chunks(2) {
         ensure!(
             pair.len() == 2
-                && ["--repo", "--tag", "--commit", "--run-id", "--assets", "--proof"]
-                    .contains(&pair[0].as_str())
+                && [
+                    "--repo",
+                    "--tag",
+                    "--commit",
+                    "--run-id",
+                    "--assets",
+                    "--proof",
+                    "--release-id"
+                ]
+                .contains(&pair[0].as_str())
                 && options.insert(pair[0].as_str(), pair[1].as_str()).is_none(),
             "candidate-invalid-options"
         );
@@ -463,7 +495,8 @@ pub fn run(args: &[String]) -> Result<()> {
                 );
                 expected.insert(name, (meta.len(), crate::support::sha256_file(&path)?));
             }
-            let proof = publish(&api, repo, tag, sha, run_id, &expected)?;
+            let release_id = get("--release-id")?.parse::<u64>()?;
+            let proof = publish(&api, repo, tag, sha, run_id, release_id, &expected)?;
             fs::write(get("--proof")?, serde_json::to_vec(&proof)?)?;
             json!({"candidate_published":true,"assets_verified":10})
         }
@@ -569,11 +602,23 @@ mod tests {
             if self.unavailable {
                 bail!("controlled-private-marker-api-unavailable");
             }
-            self.data
-                .borrow()
-                .get(path)
-                .cloned()
-                .ok_or_else(|| ApiNotFound.into())
+            let data = self.data.borrow();
+            let current = data.get(&format!("/releases/tags/{TAG}"));
+            if path == format!("/releases/tags/{TAG}")
+                && current.is_some_and(|release| release["draft"] == true)
+            {
+                return Err(ApiNotFound.into());
+            }
+            if let Some(value) = data.get(path) {
+                return Ok(value.clone());
+            }
+            if path == "/releases/9" {
+                return current.cloned().ok_or_else(|| ApiNotFound.into());
+            }
+            if path == "/releases?per_page=100&page=1" {
+                return Ok(json!(current.into_iter().cloned().collect::<Vec<_>>()));
+            }
+            Err(ApiNotFound.into())
         }
         fn post(&self, _: &str, _: &Value) -> Result<Value> {
             bail!("unexpected-create");
@@ -859,8 +904,9 @@ mod tests {
             .borrow_mut()
             .get_mut(&format!("/releases/tags/{TAG}"))
             .unwrap()["draft"] = true.into();
-        let expected = assets(&f.get(&format!("/releases/tags/{TAG}")).unwrap()).unwrap();
-        let proof = publish(&f, REPO, TAG, SHA, 7, &expected).unwrap();
+        assert!(f.get(&format!("/releases/tags/{TAG}")).is_err());
+        let expected = assets(&f.get("/releases/9").unwrap()).unwrap();
+        let proof = publish(&f, REPO, TAG, SHA, 7, 9, &expected).unwrap();
         assert_eq!(proof["assets"], f.proof()["assets"]);
         assert_eq!(proof["asset_ids"], f.proof()["asset_ids"]);
         assert_eq!(
@@ -884,7 +930,7 @@ mod tests {
             .borrow_mut()
             .get_mut(&format!("/releases/tags/{TAG}"))
             .unwrap()["assets"][0]["size"] = 101.into();
-        assert!(publish(&f, REPO, TAG, SHA, 7, &expected).is_err());
+        assert!(publish(&f, REPO, TAG, SHA, 7, 9, &expected).is_err());
         assert!(f.changes.borrow().is_empty());
     }
     #[test]
@@ -1013,9 +1059,8 @@ mod tests {
                 .borrow_mut()
                 .get_mut(&format!("/releases/tags/{TAG}"))
                 .unwrap()["draft"] = true.into();
-            let expected =
-                assets(&api.fixture.get(&format!("/releases/tags/{TAG}")).unwrap()).unwrap();
-            assert!(publish(&api, REPO, TAG, SHA, 7, &expected).is_err());
+            let expected = assets(&api.fixture.get("/releases/9").unwrap()).unwrap();
+            assert!(publish(&api, REPO, TAG, SHA, 7, 9, &expected).is_err());
             assert_eq!(api.fixture.changes.borrow().len(), 1);
         }
     }
@@ -1040,5 +1085,139 @@ mod tests {
             .unwrap()["assets"][0]["id"] = 1001.into();
         let (release_id, expected, ids) = validate_proof(&proof, REPO, TAG, SHA, 7).unwrap();
         assert!(confirm_stable(&fixture, TAG, SHA, release_id, &expected, &ids).is_err());
+    }
+    fn unrelated_release_page(page: usize) -> Value {
+        json!((0..100).map(|index| json!({"id":1000+page*100+index,"tag_name":format!("unrelated-{page}-{index}"),"draft":false})).collect::<Vec<_>>())
+    }
+    #[test]
+    fn fresh_candidate_lookup_rejects_hidden_drafts_on_later_authenticated_pages() {
+        for draft in [false, true] {
+            let fixture = Fixture::new();
+            let mut existing = fixture.get(&format!("/releases/tags/{TAG}")).unwrap();
+            existing["draft"] = draft.into();
+            fixture
+                .data
+                .borrow_mut()
+                .insert(format!("/releases/tags/{TAG}"), existing.clone());
+            fixture.data.borrow_mut().insert(
+                "/releases?per_page=100&page=1".into(),
+                unrelated_release_page(1),
+            );
+            fixture
+                .data
+                .borrow_mut()
+                .insert("/releases?per_page=100&page=2".into(), json!([existing]));
+            if draft {
+                assert!(fixture.get(&format!("/releases/tags/{TAG}")).is_err());
+            }
+            let error = ensure_new(&fixture, REPO, TAG, SHA, 7).unwrap_err();
+            assert_eq!(error.to_string(), "candidate-release-already-exists");
+            assert!(fixture.changes.borrow().is_empty());
+        }
+    }
+    #[test]
+    fn fresh_candidate_lookup_accepts_absence_only_after_a_complete_list() {
+        let fixture = Fixture::new();
+        fixture
+            .data
+            .borrow_mut()
+            .remove(&format!("/releases/tags/{TAG}"));
+        fixture.data.borrow_mut().insert(
+            "/releases?per_page=100&page=1".into(),
+            unrelated_release_page(1),
+        );
+        fixture
+            .data
+            .borrow_mut()
+            .insert("/releases?per_page=100&page=2".into(), json!([]));
+        ensure_new(&fixture, REPO, TAG, SHA, 7).unwrap();
+        assert!(fixture.changes.borrow().is_empty());
+    }
+    #[test]
+    fn draft_listing_api_failure_malformed_fields_and_pagination_limit_fail_closed() {
+        for invalid in [
+            "unavailable",
+            "malformed",
+            "missing-tag",
+            "missing-id",
+            "oversize",
+        ] {
+            let fixture = Fixture::new();
+            fixture.data.borrow_mut().insert(
+                "/releases?per_page=100&page=1".into(),
+                unrelated_release_page(1),
+            );
+            let response = match invalid {
+                "malformed" => Some(json!({})),
+                "missing-tag" => Some(json!([{"id":77}])),
+                "missing-id" => Some(json!([{"tag_name":"other"}])),
+                "oversize" => Some(json!((0..101)
+                    .map(|index| json!({"id":index+1,"tag_name":"other"}))
+                    .collect::<Vec<_>>())),
+                _ => None,
+            };
+            if let Some(value) = response {
+                fixture
+                    .data
+                    .borrow_mut()
+                    .insert("/releases?per_page=100&page=2".into(), value);
+            }
+            assert!(ensure_new(&fixture, REPO, TAG, SHA, 7).is_err());
+            assert!(fixture.changes.borrow().is_empty());
+        }
+        let fixture = Fixture::new();
+        for page in 1..=RELEASE_LIST_PAGES {
+            fixture.data.borrow_mut().insert(
+                format!("/releases?per_page=100&page={page}"),
+                unrelated_release_page(page),
+            );
+        }
+        assert_eq!(
+            ensure_new(&fixture, REPO, TAG, SHA, 7)
+                .unwrap_err()
+                .to_string(),
+            "candidate-release-list-pagination-limit"
+        );
+        assert!(fixture.changes.borrow().is_empty());
+    }
+    #[test]
+    fn publish_uses_the_actions_positive_draft_id_and_rejects_mismatched_api_identity() {
+        for wrong in ["zero-id", "response-id", "response-tag", "not-draft"] {
+            let fixture = Fixture::new();
+            let expected = assets(&fixture.get("/releases/9").unwrap()).unwrap();
+            fixture
+                .data
+                .borrow_mut()
+                .get_mut(&format!("/releases/tags/{TAG}"))
+                .unwrap()["draft"] = true.into();
+            let requested = match wrong {
+                "zero-id" => 0,
+                "response-id" => 10,
+                _ => 9,
+            };
+            if wrong == "response-id" {
+                let wrong_response = fixture.get("/releases/9").unwrap();
+                fixture
+                    .data
+                    .borrow_mut()
+                    .insert("/releases/10".into(), wrong_response);
+            }
+            if wrong == "response-tag" {
+                fixture
+                    .data
+                    .borrow_mut()
+                    .get_mut(&format!("/releases/tags/{TAG}"))
+                    .unwrap()["tag_name"] = "v2.1.2".into();
+            }
+            if wrong == "not-draft" {
+                fixture
+                    .data
+                    .borrow_mut()
+                    .get_mut(&format!("/releases/tags/{TAG}"))
+                    .unwrap()["draft"] = false.into();
+            }
+            assert!(publish(&fixture, REPO, TAG, SHA, 7, requested, &expected).is_err());
+            assert!(fixture.changes.borrow().is_empty());
+        }
     }
 }

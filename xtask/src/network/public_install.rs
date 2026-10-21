@@ -22,6 +22,9 @@ use std::{
 #[cfg(windows)]
 #[path = "windows_acl.rs"]
 mod windows_acl;
+#[cfg(windows)]
+#[path = "windows_processes.rs"]
+mod windows_processes;
 
 const REPO: &str = "neko233-com/vpn233-all";
 const PROGRAMS: [&str; 3] = [
@@ -648,9 +651,6 @@ fn exercise_installed(
     let logs = scripts.logs;
     let windows = cfg!(windows);
     let suffix = if windows { ".ps1" } else { ".sh" };
-    let run_script = |label: &'static str, path: &Path, args: &[String], limit: Duration| {
-        scripts.run(label, path, args, limit)
-    };
     cleanup.processes = Some(stage("start-launcher", || scripts.start())?);
     stage("start-health-ui-provider-and-subscription", || {
         let client = stage("loopback-http-client", || {
@@ -784,73 +784,68 @@ fn exercise_installed(
                 "recorded process is not owned by the temporary installation"
             );
         }
-        #[cfg(windows)]
-        {
-            let script = "$ErrorActionPreference='Stop';foreach($name in @('provider-server','subscribe-server','vpn233-client')){$file=Join-Path $env:VPN233_TEST_PREFIX ('runtime/'+$name+'.pid');$id=[int]([IO.File]::ReadAllText($file).Trim());$running=Get-Process -Id $id -ErrorAction Stop;$binary=if($name -eq 'vpn233-client'){$name}else{'vpn233-'+$name};$expected=[IO.Path]::GetFullPath((Join-Path $env:VPN233_TEST_PREFIX ('bin/'+$binary+'.exe')));if($running.Path -ne $expected){exit 1};$identity=[IO.File]::ReadAllText($file+'.identity').Trim();if($identity -ne [string]$running.StartTime.ToUniversalTime().Ticks){exit 1}}";
-            let mut cmd = script_command_inline(shell, script, environment);
-            cmd.env("VPN233_TEST_PREFIX", prefix);
-            ensure!(
-                crate::support::process_output(&mut cmd, None, Duration::from_secs(30))?
-                    .status
-                    .success(),
-                "recorded Windows process is not owned by the temporary installation"
-            );
-        }
         Ok(pids)
     })?;
+    #[cfg(windows)]
+    let native_processes = stage("native-process-identities", || {
+        windows_processes::capture(prefix, &pids)
+    })?;
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let _ = pids;
     stage("stop-exact-three-owned-processes", || {
-        run_script(
-            "stop",
-            &prefix.join(format!("stop{suffix}")),
-            &[],
-            Duration::from_secs(60),
-        )?;
-        ensure!(
-            !fs::read_dir(prefix.join("runtime"))?.any(|entry| entry
-                .ok()
-                .is_some_and(|e| e.path().extension().is_some_and(|s| s == "pid"))),
-            "stop retained PID metadata"
-        );
-        for port in ports {
+        stage("stop-launcher", || {
+            scripts.run(
+                "stop",
+                &prefix.join(format!("stop{suffix}")),
+                &[],
+                Duration::from_secs(60),
+            )
+        })?;
+        stage("stop-pid-metadata", || {
             ensure!(
-                TcpStream::connect_timeout(
-                    &SocketAddr::from((Ipv4Addr::LOCALHOST, *port)),
-                    Duration::from_millis(300)
-                )
-                .is_err(),
-                "installed listener survived stop"
+                !fs::read_dir(prefix.join("runtime"))?.any(|entry| entry
+                    .ok()
+                    .is_some_and(|e| e.path().extension().is_some_and(|s| s == "pid"))),
+                "stop retained PID metadata"
             );
-        }
+            Ok(())
+        })?;
+        stage("stop-loopback-listeners", || {
+            for port in ports {
+                ensure!(
+                    TcpStream::connect_timeout(
+                        &SocketAddr::from((Ipv4Addr::LOCALHOST, *port)),
+                        Duration::from_millis(300)
+                    )
+                    .is_err(),
+                    "installed listener survived stop"
+                );
+            }
+            Ok(())
+        })?;
         #[cfg(target_os = "linux")]
-        for pid in &pids {
-            ensure!(
-                !PathBuf::from(format!("/proc/{pid}/exe")).exists(),
-                "owned process survived stop"
-            );
-        }
+        stage("stop-linux-process-identities", || {
+            for pid in &pids {
+                ensure!(
+                    !PathBuf::from(format!("/proc/{pid}/exe")).exists(),
+                    "owned process survived stop"
+                );
+            }
+            Ok(())
+        })?;
         #[cfg(windows)]
-        {
-            let mut cmd = script_command_inline(shell, "$ids=$env:VPN233_TEST_PIDS -split ','; foreach($id in $ids){if(Get-Process -Id ([int]$id) -ErrorAction SilentlyContinue){exit 1}}", environment);
-            cmd.env(
-                "VPN233_TEST_PIDS",
-                pids.iter()
-                    .map(u32::to_string)
-                    .collect::<Vec<_>>()
-                    .join(","),
-            );
-            ensure!(
-                crate::support::process_output(&mut cmd, None, Duration::from_secs(15))?
-                    .status
-                    .success(),
-                "owned Windows process survived stop"
-            );
-        }
-        for (path, expected) in before {
-            ensure!(
-                crate::support::sha256_file(&prefix.join(path))? == *expected,
-                "runtime changed original configuration or unrelated data"
-            );
-        }
+        stage("stop-native-process-identities", || {
+            native_processes.ensure_exited()
+        })?;
+        stage("configuration-data-preservation", || {
+            for (path, expected) in before {
+                ensure!(
+                    crate::support::sha256_file(&prefix.join(path))? == *expected,
+                    "runtime changed original configuration or unrelated data"
+                );
+            }
+            Ok(())
+        })?;
         Ok(())
     })?;
     stage("capture-completion", || cleanup.finish_capture())?;
@@ -1284,7 +1279,7 @@ fn environment(work: &Path) -> Vec<(OsString, OsString)> {
     }
     values
 }
-fn protect_temporary_directory(path: &Path) -> Result<()> {
+pub(super) fn protect_temporary_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1318,19 +1313,6 @@ fn script_command(shell: &Path, path: &Path, environment: &[(OsString, OsString)
     } else {
         command.arg(path_arg(path));
     }
-    command
-}
-#[cfg(windows)]
-fn script_command_inline(
-    shell: &Path,
-    script: &str,
-    environment: &[(OsString, OsString)],
-) -> Command {
-    let mut command = Command::new(shell);
-    command
-        .env_clear()
-        .envs(environment.iter().cloned())
-        .args(["-NoProfile", "-Command", script]);
     command
 }
 fn versions(prefix: &Path, tag: &str, environment: &[(OsString, OsString)]) -> Result<()> {

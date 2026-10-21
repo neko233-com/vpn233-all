@@ -7,12 +7,20 @@
   Exercise the actual `-File` entry point in regression coverage.
 - Keep successful background launchers under explicit native process ownership,
   with bounded private captures, deadlines and cleanup of owned descendants.
+- Verify Windows process paths, creation times and exit state through retained
+  kernel handles in Rust, avoiding extra PowerShell process probes and PID reuse.
+- Isolate Cargo build flags in its child environment so PowerShell 5.1 and newer
+  PowerShell versions preserve the caller's absent, empty and nonempty values.
+- Update the default Mihomo core to v1.19.33 with six official asset digests and
+  keep the full parser acceptance matrix mandatory.
 - Install the already verified native archive offline and check real startup,
   all health endpoints, UI, provider discovery, subscription rendering and
   owned shutdown in Full verification and CI before publishing a tag.
 - Publish complete checksum-verified candidates as prereleases; promote to
   stable/latest only after both public installation and online update gates
   pass. Pages additionally requires the successful promotion job.
+- Address uploaded drafts by the release action's exact ID and check all bounded
+  release-list pages before accepting a new candidate tag.
 - Report fixed diagnostic stages without private paths or raw errors. Use an
   explicit one-second heartbeat in synthetic customer tests; production keeps
   its documented 30-second default.

@@ -10,30 +10,31 @@ use crate::manifest::{NodeManifest, NodePort, PROTOCOLS};
 // Official release asset digests read from the GitHub Releases API. Keep this
 // immutable allowlist aligned with DEFAULT_MIHOMO_VERSION. A custom release
 // still requires its explicit mihomo_sha256; mirrors never define trust.
+// Provenance: MetaCubeX/mihomo release 419818179 (v1.19.33), published 2026-10-21.
 const PINNED_MIHOMO_SHA256: &[(&str, &str)] = &[
     (
-        "mihomo-linux-amd64-compatible-v1.19.32.gz",
-        "ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20",
+        "mihomo-linux-amd64-compatible-v1.19.33.gz",
+        "386508bfb1c72c43b6a0eda73708ecdce82546581b0ebcb16366c53757c622b6",
     ),
     (
-        "mihomo-linux-arm64-v1.19.32.gz",
-        "9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0",
+        "mihomo-linux-arm64-v1.19.33.gz",
+        "ba408b317080ee265c46cb923a50018c1b82cbd708551cdd46a1e3e307396187",
     ),
     (
-        "mihomo-darwin-amd64-compatible-v1.19.32.gz",
-        "18b382df77bded2ad0fb3db27db5636cb15b20729d5ba995a357eeb9b46bf507",
+        "mihomo-darwin-amd64-compatible-v1.19.33.gz",
+        "eefe967b74312f70b64efa0dfa54929d00c7af8e94416e1b12df09863a40f35b",
     ),
     (
-        "mihomo-darwin-arm64-v1.19.32.gz",
-        "3312a6780652c622890fd4357c6a853bbf865464fd047ac7b7f52dab8de18652",
+        "mihomo-darwin-arm64-v1.19.33.gz",
+        "060b64b0f2c9a310831db0fe4adb2878de67bfa606c311813c1f13966aa504b6",
     ),
     (
-        "mihomo-windows-amd64-compatible-v1.19.32.zip",
-        "974a4d7ad69aed27aa2e8f91d61113573c14dadb14562c63e58effabf59816f0",
+        "mihomo-windows-amd64-compatible-v1.19.33.zip",
+        "7aaf636a4f2172dcd8ec34ac4f52797b059195e5afd6409508c963e545f8864d",
     ),
     (
-        "mihomo-windows-arm64-v1.19.32.zip",
-        "7a4f6e58af9a120920935f2150cf642d945085fdb3e753314505b334234e1d1e",
+        "mihomo-windows-arm64-v1.19.33.zip",
+        "a2a26869a14634c49f3fbcecc593b498ed8591fbdd7616b24475b3d60b148da3",
     ),
 ];
 
@@ -1160,10 +1161,29 @@ mod tests {
     fn pinned_release_has_verified_assets_for_all_supported_platforms() {
         let pin = crate::config::DEFAULT_MIHOMO_VERSION;
         assert_eq!(PINNED_MIHOMO_SHA256.len(), 6);
+        let expected: std::collections::BTreeSet<_> = [
+            format!("mihomo-linux-amd64-compatible-{pin}.gz"),
+            format!("mihomo-linux-arm64-{pin}.gz"),
+            format!("mihomo-darwin-amd64-compatible-{pin}.gz"),
+            format!("mihomo-darwin-arm64-{pin}.gz"),
+            format!("mihomo-windows-amd64-compatible-{pin}.zip"),
+            format!("mihomo-windows-arm64-{pin}.zip"),
+        ]
+        .into_iter()
+        .collect();
+        let actual: std::collections::BTreeSet<_> = PINNED_MIHOMO_SHA256
+            .iter()
+            .map(|(name, _)| (*name).to_owned())
+            .collect();
+        assert_eq!(expected, actual);
+        let example: Config = serde_yaml::from_str(include_str!("../config.example.yaml")).unwrap();
+        assert_eq!(example.mihomo_version, pin);
         for (asset, checksum) in PINNED_MIHOMO_SHA256 {
             assert!(asset.contains(pin));
             assert_eq!(checksum.len(), 64);
-            assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert!(checksum
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
             assert!(!asset.contains("arm64-compatible"));
         }
         let sh = render_sh(&manifest(), &Config::default());

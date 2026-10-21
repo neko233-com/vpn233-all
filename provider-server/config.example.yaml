@@ -37,7 +37,7 @@ enabled_protocols:
 provider_access_token: "change-me-provider-feed-token"
 
 # Pinned Mihomo release used by the generated node deployment scripts.
-mihomo_version: "v1.19.32"
+mihomo_version: "v1.19.33"
 # Optional explicit, platform-specific release asset URL (overrides the pin).
 mihomo_url: ""
 # Optional for the pinned version: official GitHub SHA256 digests for supported

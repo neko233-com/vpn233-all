@@ -5,7 +5,7 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $work = Join-Path ([IO.Path]::GetTempPath()) ('vpn233-install-test-' + [guid]::NewGuid().ToString('N'))
 $variables = @('VPN233_INSTALL_DIR', 'VPN233_HOME', 'VPN233_BIN_DIR', 'VPN233_WEB_DIR', 'VPN233_CONFIG_DIR', 'VPN233_DATA_DIR', 'VPN233_ADMIN_PASSWORD', 'VPN233_ADMIN_USER', 'VPN233_PROVIDER_FEED_TOKEN', 'VPN233_REGISTRY_TOKEN', 'VPN233_ALLOW_UNSIGNED', 'VPN233_BUNDLE_SHA256', 'VPN233_PROVIDER_PORT', 'VPN233_SUBSCRIBE_PORT', 'VPN233_CLIENT_SOCKS_PORT', 'VPN233_CLIENT_HTTP_PORT', 'VPN233_CLIENT_WEB_PORT', 'VPN233_UPDATE_BUNDLE', 'VPN233_UPDATE_SHA256', 'VPN233_UPDATE_URLS')
 $saved = @{}
-foreach ($variable in $variables) { $saved[$variable] = [Environment]::GetEnvironmentVariable($variable); [Environment]::SetEnvironmentVariable($variable, $null) }
+foreach ($variable in $variables) { $saved[$variable] = @{ Present = (Test-Path -LiteralPath ('Env:' + $variable)); Value = [Environment]::GetEnvironmentVariable($variable, 'Process') } }
 New-Item -ItemType Directory -Path $work | Out-Null
 $shell = (Get-Process -Id $PID).Path
 $script:passed = 0
@@ -28,6 +28,7 @@ function Invoke-FixtureInstall {
     return $output
 }
 try {
+    foreach ($variable in $variables) { if (Test-Path -LiteralPath ('Env:' + $variable)) { Remove-Item -LiteralPath ('Env:' + $variable) } }
     $fixture = Join-Path $work 'fixture'
     foreach ($directory in @('bin', 'examples', 'admin-web/dist')) { New-Item -ItemType Directory -Force -Path (Join-Path $fixture $directory) | Out-Null }
     foreach ($binary in @('vpn233-provider-server', 'vpn233-subscribe-server', 'vpn233-client')) { [IO.File]::WriteAllText((Join-Path $fixture ('bin/' + $binary + '.exe')), 'synthetic executable fixture') }
@@ -137,6 +138,9 @@ try {
     }
     Write-Host ('test-installers.ps1: ' + $script:passed + ' passed')
 } finally {
-    foreach ($variable in $variables) { [Environment]::SetEnvironmentVariable($variable, $saved[$variable]) }
+    foreach ($variable in $variables) {
+        if ($saved[$variable].Present) { Set-Item -LiteralPath ('Env:' + $variable) -Value $saved[$variable].Value }
+        elseif (Test-Path -LiteralPath ('Env:' + $variable)) { Remove-Item -LiteralPath ('Env:' + $variable) }
+    }
     Remove-Item -LiteralPath $work -Recurse -Force
 }

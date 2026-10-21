@@ -22,7 +22,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 foreach ($key in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
-    [Environment]::SetEnvironmentVariable($key, $null, 'Process')
+    if (Test-Path -LiteralPath ('Env:' + $key)) { Remove-Item -LiteralPath ('Env:' + $key) }
 }
 
 # --- paths and state -----------------------------------------------------

@@ -5,6 +5,11 @@ mod mihomo;
 mod mirrors;
 mod public_install;
 
+/// Prepare a fresh caller-owned directory for private verification fixtures.
+pub fn protect_private_directory(path: &Path) -> Result<()> {
+    public_install::protect_temporary_directory(path)
+}
+
 use anyhow::{anyhow, bail, Result};
 use std::{
     env,

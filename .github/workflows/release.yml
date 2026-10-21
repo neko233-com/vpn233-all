@@ -251,6 +251,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: '"$VPN233_XTASK_BIN" release-candidate check-new --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"'
       - name: Attach verified assets to a draft
+        id: candidate-draft
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ github.ref_name }}
@@ -270,7 +271,8 @@ jobs:
       - name: Publish checksum-verified candidate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: '"$VPN233_XTASK_BIN" release-candidate publish --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --assets dist --proof candidate-publication-proof.json'
+          CANDIDATE_RELEASE_ID: ${{ steps.candidate-draft.outputs.id }}
+        run: '"$VPN233_XTASK_BIN" release-candidate publish --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --release-id "$CANDIDATE_RELEASE_ID" --assets dist --proof candidate-publication-proof.json'
       - name: Preserve candidate identity proof
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

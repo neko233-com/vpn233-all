@@ -19,7 +19,7 @@ pub const MIRROR_PREFIXES: [&str; 5] = [
 ];
 
 /// Default pinned Mihomo release used by the generated node scripts.
-pub const DEFAULT_MIHOMO_VERSION: &str = "v1.19.32";
+pub const DEFAULT_MIHOMO_VERSION: &str = "v1.19.33";
 /// Default admin session TTL: 12 hours.
 pub const DEFAULT_SESSION_TTL_SECS: u64 = 12 * 60 * 60;
 /// Default number of failed logins allowed inside [`LOGIN_RATE_WINDOW_SECS`].

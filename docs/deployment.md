@@ -63,7 +63,7 @@ Linux `--system` 需要管理员权限，使用 `/opt/vpn233`、`/etc/vpn233`、
 
 ## Provider 生成的代理节点
 
-Provider 的 `.sh` / `.ps1` 输出用于安装代理节点，与上述三个 VPN233 服务的安装入口不同。它部署外部 Mihomo 并生成 8 种入站配置。默认固定 Mihomo `v1.19.32`，内嵌官方 GitHub Release 的 Linux、macOS、Windows x64 / arm64 共六个平台资产 SHA-256；未知版本或自定义资产需要独立配置 `mihomo_sha256`，默认拒绝缺失或错误的校验和。ARM64 使用其实际发布的资源名，不添加 x64 的 `compatible` 后缀。
+Provider 的 `.sh` / `.ps1` 输出用于安装代理节点，与上述三个 VPN233 服务的安装入口不同。它部署外部 Mihomo 并生成 8 种入站配置。默认固定 Mihomo `v1.19.33`，内嵌官方 GitHub Release 的 Linux、macOS、Windows x64 / arm64 共六个平台资产 SHA-256；未知版本或自定义资产需要独立配置 `mihomo_sha256`，默认拒绝缺失或错误的校验和。ARM64 使用其实际发布的资源名，不添加 x64 的 `compatible` 后缀。
 
 HTTPS 入站需要证书和私钥。可使用本地 `VPN233_TLS_CERT`、`VPN233_TLS_KEY` 指定文件；缺少文件时尝试使用 OpenSSL 生成自签证书。Windows 也会查找 Git for Windows 附带的 OpenSSL。没有可用证书或生成失败时退出，启动前先运行 Mihomo 配置检查。Hysteria2、TUIC 需要目标端口的 UDP 放行。
 

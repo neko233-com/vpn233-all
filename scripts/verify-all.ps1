@@ -184,17 +184,18 @@ try {
             }
             $previousBundleEnvironment = @{}
             foreach ($name in $bundleEnvironment.Keys) {
-                $previousBundleEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+                $previousBundleEnvironment[$name] = @{ Present = (Test-Path -LiteralPath ('Env:' + $name)); Value = [Environment]::GetEnvironmentVariable($name, 'Process') }
             }
             try {
                 foreach ($name in $bundleEnvironment.Keys) {
-                    [Environment]::SetEnvironmentVariable($name, $bundleEnvironment[$name], 'Process')
+                    Set-Item -LiteralPath ('Env:' + $name) -Value $bundleEnvironment[$name]
                 }
                 Invoke-Native (Get-Bash) @('.github/scripts/assemble-bundle.sh')
             }
             finally {
                 foreach ($name in $previousBundleEnvironment.Keys) {
-                    [Environment]::SetEnvironmentVariable($name, $previousBundleEnvironment[$name], 'Process')
+                    if ($previousBundleEnvironment[$name].Present) { Set-Item -LiteralPath ('Env:' + $name) -Value $previousBundleEnvironment[$name].Value }
+                    elseif (Test-Path -LiteralPath ('Env:' + $name)) { Remove-Item -LiteralPath ('Env:' + $name) }
                 }
             }
         }

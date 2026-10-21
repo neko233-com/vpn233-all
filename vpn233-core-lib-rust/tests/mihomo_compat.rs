@@ -16,7 +16,11 @@ fn every_advertised_mihomo_protocol_has_a_complete_import_fixture() {
         .collect();
     let expected: BTreeSet<&str> = supported_protocols().iter().copied().collect();
     assert_eq!(actual, expected);
-    for (name, body) in fixtures::configurations() {
+    let configurations = fixtures::configurations();
+    // This public coverage contract is 57 synthetic outbound configurations plus
+    // eight individual inbound configurations and their combined configuration: 66.
+    assert_eq!(configurations.len(), 57);
+    for (name, body) in configurations {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
         assert!(!yaml["proxies"].as_sequence().unwrap().is_empty(), "{name}");
         for forbidden in [
