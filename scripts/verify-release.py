@@ -12,6 +12,7 @@ import posixpath
 import re
 import runpy
 import stat
+import struct
 import sys
 import tarfile
 import zipfile
@@ -29,6 +30,117 @@ COMMON = {
     "scripts/lib/mirrors.sh", "scripts/lib/mirrors.ps1", "scripts/lib/services.sh", "scripts/lib/layout.sh", "scripts/lib/layout.ps1", *OPERATORS,
 }
 WEB_SUFFIXES = {".html", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".woff", ".woff2", ".ttf", ".txt"}
+VC_RUNTIME = re.compile(r"(?:vcruntime.*|msvcp.*|msvcr(?:\d.*|td)|concrt\d.*|vcomp\d.*|vccorlib\d.*|mfcm?\d.*|atl\d.*)\.dll", re.IGNORECASE)
+
+
+def pe_imports(data: bytes) -> set[str]:
+    """Read bounded AMD64 PE32+ import tables without loading the executable.
+
+    Layouts: https://learn.microsoft.com/windows/win32/debug/pe-format
+    Both ordinary and delay-loaded imports must meet the runtime dependency gate.
+    """
+    def unpack(layout: str, offset: int) -> tuple:
+        size = struct.calcsize(layout)
+        if offset < 0 or offset + size > len(data):
+            raise ValueError("invalid PE")
+        return struct.unpack_from(layout, data, offset)
+
+    if len(data) < 64 or data[:2] != b"MZ":
+        raise ValueError("invalid PE")
+    pe = unpack("<I", 0x3C)[0]
+    if pe < 64 or data[pe:pe + 4] != b"PE\0\0":
+        raise ValueError("invalid PE")
+    machine, count, _, _, _, optional_size, flags = unpack("<HHIIIHH", pe + 4)
+    optional = pe + 24
+    sections_start = optional + optional_size
+    if machine != 0x8664 or not 1 <= count <= 96 or not flags & 2 or flags & 0x2000:
+        raise ValueError("invalid PE")
+    if optional_size < 112 or sections_start + count * 40 > len(data) or unpack("<H", optional)[0] != 0x20B:
+        raise ValueError("invalid PE")
+    entry = unpack("<I", optional + 16)[0]
+    headers = unpack("<I", optional + 60)[0]
+    directory_count = unpack("<I", optional + 108)[0]
+    if not 2 <= directory_count <= 16 or 112 + directory_count * 8 > optional_size:
+        raise ValueError("invalid PE")
+    if not sections_start + count * 40 <= headers <= len(data):
+        raise ValueError("invalid PE")
+    sections: list[tuple[int, int, int, int]] = []
+    virtual_ranges = [(0, headers)]
+    raw_ranges = [(0, headers)]
+    executable_entry = False
+    for number in range(count):
+        start = sections_start + number * 40
+        virtual_size, rva, raw_size, raw = unpack("<IIII", start + 8)
+        section_flags = unpack("<I", start + 36)[0]
+        span = max(virtual_size, raw_size)
+        if not span or rva + span > 0x100000000 or raw + raw_size > len(data):
+            raise ValueError("invalid PE")
+        if any(rva < end and rva + span > begin for begin, end in virtual_ranges):
+            raise ValueError("invalid PE")
+        if raw_size and any(raw < end and raw + raw_size > begin for begin, end in raw_ranges):
+            raise ValueError("invalid PE")
+        virtual_ranges.append((rva, rva + span))
+        if raw_size:
+            raw_ranges.append((raw, raw + raw_size))
+        sections.append((rva, span, raw, raw_size))
+        executable_entry |= bool(section_flags & 0x20000000 and rva <= entry < rva + raw_size)
+    if not executable_entry:
+        raise ValueError("invalid PE")
+
+    def locate(rva: int, size: int) -> tuple[int, int]:
+        if rva < 0 or size < 1 or rva + size > 0x100000000:
+            raise ValueError("invalid PE")
+        if rva + size <= headers:
+            return rva, headers
+        for base, _, raw, raw_size in sections:
+            if base <= rva and rva + size <= base + raw_size:
+                return raw + rva - base, raw + raw_size
+        raise ValueError("invalid PE")
+
+    def dll_name(rva: int) -> str:
+        start, end = locate(rva, 1)
+        terminator = data.find(b"\0", start, min(end, start + 261))
+        if terminator < 0:
+            raise ValueError("invalid PE")
+        value = data[start:terminator].decode("ascii")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.dll", value, re.IGNORECASE):
+            raise ValueError("invalid PE")
+        return value.lower()
+
+    imports: set[str] = set()
+    for index, width in ((1, 20), (13, 32)):
+        if index >= directory_count:
+            continue
+        rva, size = unpack("<II", optional + 112 + index * 8)
+        if rva == size == 0:
+            continue
+        if not rva or size < width or size > 1024 * 1024:
+            raise ValueError("invalid PE")
+        start, _ = locate(rva, size)
+        for offset in range(0, size - width + 1, width):
+            descriptor = unpack("<" + "I" * (width // 4), start + offset)
+            if not any(descriptor):
+                break
+            if index == 13:
+                # Modern PE32+ delay descriptors use RVAs; reject legacy pointer
+                # encodings instead of silently overlooking their dependencies.
+                if descriptor[0] != 1:
+                    raise ValueError("invalid PE")
+                name = descriptor[1]
+            else:
+                name = descriptor[3]
+            imports.add(dll_name(name))
+        else:
+            raise ValueError("invalid PE")
+    return imports
+
+
+def windows_binary_rules(data: bytes) -> set[str]:
+    try:
+        imports = pe_imports(data)
+    except (ValueError, struct.error, UnicodeError):
+        return {"windows-invalid-amd64-pe"}
+    return {"windows-extra-vc-runtime"} if any(VC_RUNTIME.fullmatch(name) for name in imports) else set()
 
 
 def inspect_archive(archive: Path, version: str) -> list[str]:
@@ -64,6 +176,9 @@ def inspect_archive(archive: Path, version: str) -> list[str]:
             problems.append(f"{name}: sensitive-file-path {relative}")
         for rule in sorted(PRIVACY["content_rules"](data)):
             problems.append(f"{name}: {rule} in {relative} (value redacted)")
+        if suffix and relative in {"bin/" + binary + suffix for binary in BINARIES}:
+            for rule in sorted(windows_binary_rules(data)):
+                problems.append(f"{name}: {rule} in {relative} (dependency redacted)")
         if relative == "version.txt" and data.decode("ascii", "replace").strip() != version:
             problems.append(f"{name}: version.txt does not match the release version")
         if relative.endswith(".md"):

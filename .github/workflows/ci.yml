@@ -27,7 +27,7 @@ jobs:
           - os: windows-latest
             platform: Windows
             extension: .exe
-            cache: ci-Windows
+            cache: ci-Windows-static-crt
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:

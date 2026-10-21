@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure reproducible Rust path remapping without storing machine paths.
+"""Prepare privacy-remapped Rust builds with a self-contained Windows CRT.
 
 Default emits CARGO_ENCODED_RUSTFLAGS for a calling shell to capture. --github
 writes it directly to GITHUB_ENV; neither mode is intended for logging.
@@ -14,6 +14,9 @@ def encoded_flags() -> str:
     separator = chr(31)
     encoded = os.environ.get("CARGO_ENCODED_RUSTFLAGS", "")
     flags = encoded.split(separator) if encoded else shlex.split(os.environ.get("RUSTFLAGS", ""), posix=os.name != "nt")
+    # Fresh Windows installations must not need a separate VC++ redistributable.
+    if os.name == "nt" and "-Ctarget-feature=+crt-static" not in flags:
+        flags.append("-Ctarget-feature=+crt-static")
     mappings = [(Path.home(), "/user"), (Path(__file__).resolve().parents[1], "/vpn233")]
     for key, replacement in (("CARGO_HOME", "/cargo"), ("RUSTUP_HOME", "/rustup")):
         if os.environ.get(key):

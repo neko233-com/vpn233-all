@@ -51,6 +51,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Bundle ./vpn233
 
 Windows 的用户根目录为 `%USERPROFILE%`。`VPN233_BIN_DIR`、`VPN233_WEB_DIR`、`VPN233_CONFIG_DIR`、`VPN233_DATA_DIR` 覆盖目录，`VPN233_WEB_DIR` 直接指向 `dist`。进程模式在安装目录运行 `start.sh` / `start.ps1` 和 `stop.sh` / `stop.ps1`；服务模式使用对应系统服务管理器。
 
+Windows 发布程序静态链接 Visual C++ 运行库，无需另装 VC++ Redistributable；打包时检查三个 EXE 的实际导入表，发现额外 VC 运行库依赖会拒绝发布。
+
 Linux `--system` 需要管理员权限，使用 `/opt/vpn233`、`/etc/vpn233`、`/var/lib/vpn233`，可用时注册 systemd；用户模式可用时使用用户 systemd。macOS 使用 launchd。Windows `-System` 使用 `%ProgramData%/vpn233` 并要求管理员权限；当前运行后台进程，不注册 Windows 服务或开机自启动。
 
 安装器把目录和运行范围保存到仅本机可读的 `.vpn233-layout`，不包含密码。更新、启动、停止和卸载读取该记录，因此系统模式和外置配置目录不会在更新时切换到新默认目录；显式环境变量仍可覆盖。文件损坏或旧目录归属无法确定时中止，不能猜测并重建生产配置。此文件不能发布。
