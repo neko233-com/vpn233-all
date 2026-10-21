@@ -3,7 +3,9 @@
 set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
-target_dir="$ROOT_DIR/target/xtask-bootstrap"
+# Keep this outside product target/: Rust cache pruning walks every nested
+# profile directory, including otherwise separate --target-dir builds.
+target_dir="$ROOT_DIR/.cache/xtask-bootstrap"
 suffix=''
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) suffix='.exe' ;; esac
 (

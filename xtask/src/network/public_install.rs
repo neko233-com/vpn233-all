@@ -19,6 +19,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+#[cfg(windows)]
+#[path = "windows_acl.rs"]
+mod windows_acl;
 
 const REPO: &str = "neko233-com/vpn233-all";
 const PROGRAMS: [&str; 3] = [
@@ -138,7 +141,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
     })
     .ok_or_else(|| anyhow!("native installer shell unavailable"))?;
     let mut environment = environment(work.path());
-    protect_temporary_directory(work.path(), &shell, &environment)?;
+    protect_temporary_directory(work.path())?;
     let bootstrap = work.path().join("bootstrap");
     let prefix = work.path().join("installed");
     let logs = work.path().join("diagnostics");
@@ -326,7 +329,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
     stage("installed-payload-and-versions-private-permissions", || {
         compare_payload(&prefix, &reference_files)?;
         versions(&prefix, &tag, &environment)?;
-        permissions(&prefix, &shell, &environment)
+        permissions(&prefix)
     })?;
     let default_node_ip = Regex::new(r"(?m)^default_node_ip:.*$")?;
     let auto_detect_public_ip = Regex::new(r"(?m)^auto_detect_public_ip:.*$")?;
@@ -383,7 +386,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             );
             compare_payload(&prefix, &reference_files)?;
             versions(&prefix, &tag, &environment)?;
-            permissions(&prefix, &shell, &environment)
+            permissions(&prefix)
         },
     )?;
     stage("start-health-ui-provider-and-subscription", || {
@@ -966,28 +969,15 @@ fn environment(work: &Path) -> Vec<(OsString, OsString)> {
     }
     values
 }
-fn protect_temporary_directory(
-    path: &Path,
-    shell: &Path,
-    environment: &[(OsString, OsString)],
-) -> Result<()> {
+fn protect_temporary_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-        let _ = (shell, environment);
     }
     #[cfg(windows)]
     {
-        let script = "$ErrorActionPreference='Stop';$path=$env:VPN233_TEST_PRIVATE_DIR;$acl=Get-Acl -LiteralPath $path;$acl.SetAccessRuleProtection($true,$false);foreach($rule in @($acl.Access)){[void]$acl.RemoveAccessRuleSpecific($rule)};$current=[Security.Principal.WindowsIdentity]::GetCurrent().User;$acl.SetOwner($current);foreach($sid in @($current,(New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'),(New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))){$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')))};Set-Acl -LiteralPath $path -AclObject $acl";
-        let mut cmd = script_command_inline(shell, script, environment);
-        cmd.env("VPN233_TEST_PRIVATE_DIR", path);
-        ensure!(
-            crate::support::process_output(&mut cmd, None, Duration::from_secs(30))?
-                .status
-                .success(),
-            "private temporary directory ACL protection failed"
-        );
+        windows_acl::protect_directory(path)?;
     }
     Ok(())
 }
@@ -1070,7 +1060,7 @@ fn versions(prefix: &Path, tag: &str, environment: &[(OsString, OsString)]) -> R
     }
     Ok(())
 }
-fn permissions(prefix: &Path, shell: &Path, environment: &[(OsString, OsString)]) -> Result<()> {
+fn permissions(prefix: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -1093,38 +1083,18 @@ fn permissions(prefix: &Path, shell: &Path, environment: &[(OsString, OsString)]
                 "configuration ownership or mode failed"
             );
         }
-        let _ = (shell, environment);
     }
     #[cfg(windows)]
     {
-        let script = "$ErrorActionPreference='Stop';$user=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$items=@();foreach($p in @('config','data','logs','backups','config/provider-server.yaml','config/subscribe-server.yaml','config/vpn233-client.yaml')){$path=Join-Path $env:VPN233_TEST_PREFIX $p;if(!(Test-Path -LiteralPath $path)){if($p -eq 'backups'){continue};throw 'missing private path'};$acl=Get-Acl -LiteralPath $path;$allow=@($acl.Access|Where-Object {$_.AccessControlType -eq 'Allow'}|ForEach-Object {@{sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;rights=[long]$_.FileSystemRights}});$items+=@{rules=$allow}};@{user=$user;items=$items}|ConvertTo-Json -Depth 8 -Compress";
-        let mut cmd = script_command_inline(shell, script, environment);
-        cmd.env("VPN233_TEST_PREFIX", prefix);
-        let output = crate::support::process_output(&mut cmd, None, Duration::from_secs(30))?;
-        ensure!(
-            output.status.success(),
-            "private Windows ACL inspection failed"
-        );
-        let data: Value = serde_json::from_slice(&output.stdout)?;
-        let user = data["user"]
-            .as_str()
-            .ok_or_else(|| anyhow!("ACL identity missing"))?;
-        for item in data["items"]
-            .as_array()
-            .ok_or_else(|| anyhow!("ACL items missing"))?
-        {
-            let rules = item["rules"]
-                .as_array()
-                .ok_or_else(|| anyhow!("ACL rules missing"))?;
-            ensure!(
-                rules.iter().all(|r| r["sid"] == user
-                    || r["sid"] == "S-1-5-18"
-                    || r["sid"] == "S-1-5-32-544")
-                    && rules
-                        .iter()
-                        .any(|r| r["sid"] == user && r["rights"].as_i64().unwrap_or(0) & 3 == 3),
-                "Windows private ACL grants unintended access"
-            );
+        for name in ["config", "data", "logs", "backups"] {
+            let path = prefix.join(name);
+            if name == "backups" && !path.exists() {
+                continue;
+            }
+            windows_acl::verify(&path, true)?;
+        }
+        for name in CONFIGS {
+            windows_acl::verify(&prefix.join("config").join(name), false)?;
         }
     }
     Ok(())
@@ -1276,14 +1246,7 @@ mod tests {
     #[test]
     fn private_customer_workspace_protects_future_logs() {
         let temp = tempfile::tempdir().unwrap();
-        let shell = program(if cfg!(windows) {
-            &["powershell", "pwsh"]
-        } else {
-            &["bash"]
-        })
-        .unwrap();
-        let values = environment(temp.path());
-        protect_temporary_directory(temp.path(), &shell, &values).unwrap();
+        protect_temporary_directory(temp.path()).unwrap();
         let logs = temp.path().join("logs");
         fs::create_dir(&logs).unwrap();
         let file = logs.join("fixture.log");
@@ -1302,15 +1265,10 @@ mod tests {
         }
         #[cfg(windows)]
         {
-            let script = "$ErrorActionPreference='Stop';$allowed=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544');foreach($item in @($env:VPN233_TEST_PRIVATE_DIR,(Join-Path $env:VPN233_TEST_PRIVATE_DIR 'logs/fixture.log'))){$acl=Get-Acl -LiteralPath $item;if(@($acl.Access|Where-Object {$_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowed}).Count){exit 1}};if($env:OS -ne 'Windows_NT'){exit 1}";
-            let mut command = script_command_inline(&shell, script, &values);
-            command.env("VPN233_TEST_PRIVATE_DIR", temp.path());
-            assert!(
-                crate::support::process_output(&mut command, None, Duration::from_secs(30))
-                    .unwrap()
-                    .status
-                    .success()
-            );
+            windows_acl::verify(temp.path(), true).unwrap();
+            windows_acl::verify(&logs, false).unwrap();
+            windows_acl::verify(&file, false).unwrap();
+            assert_eq!(fs::read(file).unwrap(), b"synthetic fixture only");
         }
     }
 }

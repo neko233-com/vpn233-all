@@ -24,7 +24,7 @@ jobs:
       - name: Cache native Rust verification tool
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: target/xtask-bootstrap
+          path: .cache/xtask-bootstrap
           key: xtask-${{ runner.os }}-hostlatest-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
       - name: Verify main ancestry and shared version
         run: |
@@ -73,13 +73,13 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: verified-xtask-${{ matrix.reuse }}
-          path: target/xtask-bootstrap/debug
+          path: .cache/xtask-bootstrap/debug
       - name: Select reused native Rust tool
         if: matrix.reuse != ''
         shell: bash
         run: |
-          chmod +x target/xtask-bootstrap/debug/vpn233-xtask${{ matrix.exe }}
-          XTASK_BIN="$PWD/target/xtask-bootstrap/debug/vpn233-xtask${{ matrix.exe }}"
+          chmod +x .cache/xtask-bootstrap/debug/vpn233-xtask${{ matrix.exe }}
+          XTASK_BIN="$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask${{ matrix.exe }}"
           if [ "$RUNNER_OS" = Windows ]; then XTASK_BIN="$(cygpath -m "$XTASK_BIN")"; fi
           printf 'VPN233_XTASK_BIN=%s\n' "$XTASK_BIN" >> "$GITHUB_ENV"
       - name: Restore verified admin web
@@ -105,7 +105,7 @@ jobs:
         if: matrix.reuse == ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: target/xtask-bootstrap
+          path: .cache/xtask-bootstrap
           key: xtask-${{ runner.os }}-${{ matrix.platform }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
       - name: Remap source and dependency paths for privacy
         if: matrix.reuse == ''
@@ -187,11 +187,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: verified-xtask-Linux
-          path: target/xtask-bootstrap/debug
+          path: .cache/xtask-bootstrap/debug
       - name: Select verified Rust tool
         run: |
-          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
-          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
+          chmod +x .cache/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-archives-*
@@ -259,11 +259,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: verified-xtask-Linux
-          path: target/xtask-bootstrap/debug
+          path: .cache/xtask-bootstrap/debug
       - name: Select verified Rust tool
         run: |
-          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
-          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
+          chmod +x .cache/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
       - name: Download and verify published release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -293,7 +293,7 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: verified-xtask-${{ matrix.platform }}
-          path: target/xtask-bootstrap/debug
+          path: .cache/xtask-bootstrap/debug
       - name: Install and update from public release
         shell: bash
         env:
@@ -301,6 +301,6 @@ jobs:
           RELEASE_COMMIT: ${{ github.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          XTASK_BIN="$PWD/target/xtask-bootstrap/debug/vpn233-xtask${{ matrix.extension }}"
+          XTASK_BIN="$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask${{ matrix.extension }}"
           chmod +x "$XTASK_BIN"
           "$XTASK_BIN" network public-install --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --mirror off

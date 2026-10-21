@@ -310,49 +310,56 @@ pub fn process_output(
             let _ = sender.send(StreamEvent::Input(result));
         });
     }
-    let result = (|| {
-        let mut status = None;
-        let mut stdout = None;
-        let mut stderr = None;
-        let mut input_complete = input.is_none();
-        loop {
-            if status.is_none() {
-                status = child.try_wait()?;
-                if status.is_some_and(|status| !status.success()) {
-                    // Stop descendants immediately so inherited pipes cannot
-                    // delay a failed parent until the execution deadline.
-                    group.terminate();
+    let result =
+        (|| {
+            let mut status = None;
+            let mut stdout = None;
+            let mut stderr = None;
+            let mut input_complete = input.is_none();
+            loop {
+                if status.is_none() {
+                    status = child.try_wait()?;
+                    if status.is_some_and(|status| !status.success()) {
+                        // Stop descendants immediately so inherited pipes cannot
+                        // delay a failed parent until the execution deadline.
+                        group.terminate();
+                    }
+                }
+                if status.is_some() && stdout.is_some() && stderr.is_some() && input_complete {
+                    return Ok(Output {
+                        status: status.context("missing child status")?,
+                        stdout: stdout.context("missing child output")?,
+                        stderr: stderr.context("missing child error output")?,
+                    });
+                }
+                if started.elapsed() >= timeout {
+                    bail!(
+                    "child execution exceeded deadline (parent={}, stdout={}, stderr={}, stdin={})",
+                    if status.is_some() { "exited" } else { "running" },
+                    if stdout.is_some() { "closed" } else { "pending" },
+                    if stderr.is_some() { "closed" } else { "pending" },
+                    if input_complete { "complete" } else { "pending" },
+                );
+                }
+                match receiver.recv_timeout(
+                    Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())),
+                ) {
+                    Ok(StreamEvent::Stdout(bytes)) => stdout = Some(bytes?),
+                    Ok(StreamEvent::Stderr(bytes)) => stderr = Some(bytes?),
+                    Ok(StreamEvent::Input(result)) => {
+                        result?;
+                        input_complete = true;
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected)
+                        if stdout.is_some() && stderr.is_some() && input_complete =>
+                    {
+                        thread::sleep(Duration::from_millis(1))
+                    }
+                    Err(_) => bail!("child pipe failed"),
                 }
             }
-            if status.is_some() && stdout.is_some() && stderr.is_some() && input_complete {
-                return Ok(Output {
-                    status: status.context("missing child status")?,
-                    stdout: stdout.context("missing child output")?,
-                    stderr: stderr.context("missing child error output")?,
-                });
-            }
-            if started.elapsed() >= timeout {
-                bail!("child execution exceeded deadline");
-            }
-            match receiver.recv_timeout(
-                Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())),
-            ) {
-                Ok(StreamEvent::Stdout(bytes)) => stdout = Some(bytes?),
-                Ok(StreamEvent::Stderr(bytes)) => stderr = Some(bytes?),
-                Ok(StreamEvent::Input(result)) => {
-                    result?;
-                    input_complete = true;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected)
-                    if stdout.is_some() && stderr.is_some() && input_complete =>
-                {
-                    thread::sleep(Duration::from_millis(1))
-                }
-                Err(_) => bail!("child pipe failed"),
-            }
-        }
-    })();
+        })();
     if !matches!(&result, Ok(output) if output.status.success()) {
         group.terminate();
         let _ = child.kill();

@@ -4,7 +4,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ToolArguments = @($args)
 $workspaceRoot = Split-Path -Parent $PSScriptRoot
-$bootstrapTarget = Join-Path $workspaceRoot 'target/xtask-bootstrap'
+# Product target cache pruning must never remove this independent tool.
+$bootstrapTarget = Join-Path $workspaceRoot '.cache/xtask-bootstrap'
 $savedEnvironment = @{}
 foreach ($name in @('CARGO_ENCODED_RUSTFLAGS', 'RUSTFLAGS', 'CARGO_BUILD_TARGET')) {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')

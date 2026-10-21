@@ -32,7 +32,7 @@ part of the contribution rules.
 # Rust
 cargo fmt --all
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace
+cargo test --locked --workspace --no-fail-fast
 cargo build --locked --release --workspace --exclude vpn233-xtask
 
 # Admin web
@@ -69,9 +69,9 @@ The E2E suites build no credentials into the repository: they generate random
 passwords in a temporary directory and delete it afterwards.
 
 Verification, fixtures, privacy checks, archive creation and release checks are
-implemented in Rust. `cargo test --locked --workspace` includes their regression
+implemented in Rust. `cargo test --locked --workspace --no-fail-fast` includes their regression
 tests. `cargo xtask --help` lists the development commands. The wrappers build
-the tool once in `target/xtask-bootstrap`, so product flags and test builds cannot
+the tool once in `.cache/xtask-bootstrap`, so product flags and test builds cannot
 rewrite the executable used by a Quick cache transaction. Set
 `$env:VPN233_XTASK_BIN = & ./scripts/xtask.ps1 -PathOnly` before standalone
 PowerShell E2E. The development tool is excluded from product archives.

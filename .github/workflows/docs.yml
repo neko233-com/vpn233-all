@@ -38,9 +38,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_RUN_ID: ${{ github.event.workflow_run.id || inputs.release_run_id }}
         run: |
-          [[ "$RELEASE_RUN_ID" =~ ^[0-9]+$ ]] && [ "${#RELEASE_RUN_ID}" -le 20 ] || {
-            echo 'Pages requires a numeric Release run ID' >&2; exit 1;
-          }
+          if [[ ! "$RELEASE_RUN_ID" =~ ^[0-9]+$ ]] || [ "${#RELEASE_RUN_ID}" -gt 20 ]; then
+            echo 'Pages requires a numeric Release run ID' >&2
+            exit 1
+          fi
           RUN_META="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID")"
           printf '%s' "$RUN_META" | jq -e --arg repo "$GITHUB_REPOSITORY" --arg repo_id "$GITHUB_REPOSITORY_ID" '
             .event == "push" and .path == ".github/workflows/release.yml" and
@@ -59,14 +60,14 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: verified-xtask-Linux
-          path: target/xtask-bootstrap/debug
+          path: .cache/xtask-bootstrap/debug
           repository: ${{ github.repository }}
           run-id: ${{ steps.resolve.outputs.release_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Select the verified native tool without compilation
         run: |
-          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
-          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
+          chmod +x .cache/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
       - name: Require the latest complete stable release and compare docs trees
         id: release
         env:
@@ -79,7 +80,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: pages-verification-tool
-          path: target/xtask-bootstrap/debug/vpn233-xtask
+          path: .cache/xtask-bootstrap/debug/vpn233-xtask
+          # Exact single public file already scanned by the Release workflow.
+          include-hidden-files: true
           compression-level: 1
           retention-days: 1
           if-no-files-found: error
@@ -102,11 +105,11 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: pages-verification-tool
-          path: target/xtask-bootstrap/debug
+          path: .cache/xtask-bootstrap/debug
       - name: Select the verified Rust tool
         run: |
-          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
-          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
+          chmod +x .cache/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
       - name: Verify exact release source before building
         run: |
           "$VPN233_XTASK_BIN" version
@@ -161,11 +164,11 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: pages-verification-tool
-          path: target/xtask-bootstrap/debug
+          path: .cache/xtask-bootstrap/debug
       - name: Select the verified Rust tool
         run: |
-          chmod +x target/xtask-bootstrap/debug/vpn233-xtask
-          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/target/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
+          chmod +x .cache/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
       - name: Recheck latest release immediately before deploying
         id: recheck
         env:

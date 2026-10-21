@@ -8,9 +8,10 @@
 - Preserve the previous negative cases in native Rust tests, use one loopback
   HTTP fixture across operating systems, and validate official Mihomo output
   with the same checksum-pinned parser matrix.
-- Keep the verification executable in a separate build directory and reuse
-  tested, privacy-remapped native tools in CI. Product archives still contain
-  only the three application binaries.
+- Keep the verification executable outside product target-cache pruning and
+  reuse tested, privacy-remapped native tools in CI. Optimize the compression
+  and hashing dependencies while collecting all workspace test-target failures.
+  Product archives still contain only the three application binaries.
 - Require a successful stable release, published assets, and real public
   installation/online update on Linux and Windows before Pages can publish.
   Ordinary commits do not build Pages; unchanged documentation skips publishing.
@@ -18,6 +19,8 @@
   release commit and documentation tree with stale-release protection.
 - Strengthen archive metadata privacy, bounded extraction-free validation,
   Windows path handling, architecture checks and paired tar/ZIP content checks.
+- Protect and verify Windows customer-test directories through native SID-only
+  ACL operations without shell startup, module discovery or account lookup.
 
 ## [2.0.2] - 2026-10-21 (unpublished)
 

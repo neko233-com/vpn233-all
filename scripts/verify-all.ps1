@@ -100,7 +100,7 @@ try {
     if (-not $SkipRust) {
         Invoke-Step 'Rust format' { Invoke-Native cargo @('fmt', '--all', '--', '--check') }
         Invoke-Step 'Rust clippy (locked)' { Invoke-Native cargo @('clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings') }
-        Invoke-Step 'Rust tests (locked)' { Invoke-Native cargo @('test', '--locked', '--workspace') }
+        Invoke-Step 'Rust tests (locked)' { Invoke-Native cargo @('test', '--locked', '--workspace', '--no-fail-fast') }
         if (-not $Quick) { Invoke-Step 'release binaries' { Invoke-Native cargo @('build', '--locked', '--release', '--workspace', '--exclude', 'vpn233-xtask') } }
     }
     if (-not $SkipWeb) {

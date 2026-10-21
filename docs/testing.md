@@ -5,7 +5,7 @@ title: 快速验证与发布打包
 
 快速模式用于开发反馈，完整验证用于发布验收。缓存和产物复用减少重复编译，保留完整验收门槛。
 
-验证工具统一使用 Rust workspace 中的 `vpn233-xtask`，无需 Python。隐私扫描、版本链、归档、校验和、缓存、真实 HTTP 夹具和官方解析验收均由同一个原生工具完成；回归测试随 `cargo test --locked --workspace` 自动运行。安装脚本仍通过真实 Bash / PowerShell 执行，浏览器验收使用前端已有的 Node.js / Playwright。
+验证工具统一使用 Rust workspace 中的 `vpn233-xtask`，无需 Python。隐私扫描、版本链、归档、校验和、缓存、真实 HTTP 夹具和官方解析验收均由同一个原生工具完成；回归测试随 `cargo test --locked --workspace --no-fail-fast` 自动运行。安装脚本仍通过真实 Bash / PowerShell 执行，浏览器验收使用前端已有的 Node.js / Playwright。
 
 ```bash
 bash scripts/verify-all.sh --quick
@@ -25,7 +25,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-all.ps1
 
 缓存仅加速完整的 Quick 检查集合，显式跳过项标记部分验证。完整验证和 CI 始终执行真实检查，完全不使用 Quick 报告；Quick 报告不能作为发布通过或安全签名。
 
-脚本在独立的 `target/xtask-bootstrap` 构建开发工具，并把其实际二进制内容纳入缓存指纹。业务编译和测试使用各自 target，不会在一次缓存事务中改写验证工具。正式包仍只有三个业务程序，开发工具不随安装包分发。
+脚本在独立的 `.cache/xtask-bootstrap` 构建开发工具，并把其实际二进制内容纳入缓存指纹。该目录位于业务 `target/` 之外，避免 Rust 依赖缓存恢复或清理时删除仍需执行的工具。业务编译和测试不会在一次缓存事务中改写验证工具。workspace 测试统一使用 `--no-fail-fast`，单个测试目标失败后仍收齐其余目标，最终保留非零失败状态。正式包仍只有三个业务程序，开发工具不随安装包分发。
 
 开发构建仅为压缩与哈希热路径依赖 `zlib-rs`、`sha2` 设置包级 `opt-level = 3`，减少纯 Rust 工具处理归档的耗时；其余开发和发布 profile 保持既有设置。CI 与发布的原生工具编译缓存同时包含根 `Cargo.toml`、锁文件、工具链和工具源码的内容指纹，修改这些优化配置会重新构建工具，完整验证仍执行全部真实检查。
 

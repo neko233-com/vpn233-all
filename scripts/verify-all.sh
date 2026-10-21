@@ -62,7 +62,7 @@ fi
 if [ "$skip_rust" -eq 0 ]; then
   step cargo fmt --all -- --check
   step cargo clippy --locked --workspace --all-targets -- -D warnings
-  step cargo test --locked --workspace
+  step cargo test --locked --workspace --no-fail-fast
   if [ "$quick" -eq 0 ]; then step cargo build --locked --release --workspace --exclude vpn233-xtask; fi
 fi
 if [ "$skip_web" -eq 0 ]; then

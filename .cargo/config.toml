@@ -1,2 +1,2 @@
 [alias]
-xtask = ["run", "--locked", "-p", "vpn233-xtask", "--target-dir", "target/xtask-bootstrap", "--"]
+xtask = ["run", "--locked", "-p", "vpn233-xtask", "--target-dir", ".cache/xtask-bootstrap", "--"]
