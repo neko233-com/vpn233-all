@@ -412,6 +412,7 @@ die() { printf '[vpn233] ERROR: %s\n' "$*" >&2; exit 1; }
 
 UID_NOW="$(id -u 2>/dev/null || printf '1')"
 OS_NAME="$(uname -s 2>/dev/null || printf 'Linux')"
+NODE_FILES_NEED_ROOT=1
 as_root() {
   if [ "$UID_NOW" = "0" ]; then
     "$@"
@@ -427,6 +428,28 @@ as_root() {
   esac
   if command -v sudo >/dev/null 2>&1; then
     sudo -- "$@"
+  else
+    "$@"
+  fi
+}
+
+select_node_file_identity() {
+  # A writable custom node root belongs to the caller. Never silently change
+  # its owner just because passwordless sudo happens to be installed.
+  local ancestor="$NODE_ROOT" parent
+  while [ ! -e "$ancestor" ] && [ ! -L "$ancestor" ]; do
+    parent="$(dirname -- "$ancestor")"
+    [ "$parent" != "$ancestor" ] || break
+    ancestor="$parent"
+  done
+  if [ -d "$ancestor" ] && [ -w "$ancestor" ] && [ -x "$ancestor" ]; then
+    NODE_FILES_NEED_ROOT=0
+  fi
+}
+
+as_node_owner() {
+  if [ "$NODE_FILES_NEED_ROOT" = "1" ]; then
+    as_root "$@"
   else
     "$@"
   fi
@@ -566,19 +589,19 @@ download_mihomo() {
   if [ "$ok" != "1" ]; then
     die 'all download mirrors failed'
   fi
-  as_root mkdir -p "$NODE_ROOT/bin"
-  if ! gzip -dc "$tmp" > "$NODE_ROOT/bin/mihomo.tmp"; then
+  as_node_owner mkdir -p "$NODE_ROOT/bin"
+  if ! gzip -dc "$tmp" | as_node_owner tee "$NODE_ROOT/bin/mihomo.tmp" >/dev/null; then
     rm -f "$tmp"
     die 'the mihomo archive is not a gzip stream'
   fi
-  as_root mv "$NODE_ROOT/bin/mihomo.tmp" "$MIHOMO_BIN"
-  as_root chmod 755 "$MIHOMO_BIN"
+  as_node_owner mv "$NODE_ROOT/bin/mihomo.tmp" "$MIHOMO_BIN"
+  as_node_owner chmod 755 "$MIHOMO_BIN"
   rm -f "$tmp"
   log "mihomo installed at $MIHOMO_BIN"
 }
 
 ensure_mihomo() {
-  if [ -x "$MIHOMO_BIN" ]; then
+  if as_node_owner test -x "$MIHOMO_BIN"; then
     log "using existing mihomo binary: $MIHOMO_BIN"
     return 0
   fi
@@ -590,7 +613,7 @@ ensure_mihomo() {
 }
 
 ensure_certs() {
-  if [ -f "$TLS_CERT" ] && [ -f "$TLS_KEY" ]; then
+  if as_node_owner test -f "$TLS_CERT" && as_node_owner test -f "$TLS_KEY"; then
     log "using TLS certificate: $TLS_CERT"
     return 0
   fi
@@ -604,10 +627,10 @@ ensure_certs() {
   # MSYS2_ARG_CONV_EXCL keeps Git Bash from rewriting the /CN=... subject into
   # a Windows path; it is ignored on Linux/macOS.
   if MSYS2_ARG_CONV_EXCL="/CN" openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tmpdir/node.key" -out "$tmpdir/node.crt" -days 825 -subj "/CN=${cn}" >/dev/null 2>&1; then
-    as_root mkdir -p "$CERT_DIR"
-    as_root cp "$tmpdir/node.crt" "$TLS_CERT"
-    as_root cp "$tmpdir/node.key" "$TLS_KEY"
-    as_root chmod 600 "$TLS_CERT" "$TLS_KEY"
+    as_node_owner mkdir -p "$CERT_DIR"
+    as_node_owner cp "$tmpdir/node.crt" "$TLS_CERT"
+    as_node_owner cp "$tmpdir/node.key" "$TLS_KEY"
+    as_node_owner chmod 600 "$TLS_CERT" "$TLS_KEY"
   else
     die 'self-signed certificate generation failed; provide TLS certificate files manually'
   fi
@@ -622,10 +645,10 @@ VPN233_YAML
 
 install_config() {
   log "writing mihomo config: $CONFIG_FILE"
-  as_root mkdir -p "$CONFIG_DIR" "$CERT_DIR"
-  as_root chmod 700 "$CONFIG_DIR" "$CERT_DIR" || warn 'cannot tighten config directory permissions'
-  render_config | as_root tee "$CONFIG_FILE" >/dev/null
-  as_root chmod 600 "$CONFIG_FILE" || warn 'cannot tighten config permissions'
+  as_node_owner mkdir -p "$CONFIG_DIR" "$CERT_DIR"
+  as_node_owner chmod 700 "$CONFIG_DIR" "$CERT_DIR" || warn 'cannot tighten config directory permissions'
+  render_config | as_node_owner tee "$CONFIG_FILE" >/dev/null
+  as_node_owner chmod 600 "$CONFIG_FILE" || warn 'cannot tighten config permissions'
 }
 
 render_unit() {
@@ -714,17 +737,18 @@ main() {
     log 'DRY-RUN OK'
     return 0
   fi
+  select_node_file_identity
   # Refuse before downloading/replacing an application, generating certificates,
   # or writing configuration. New manifest credentials must never be advertised
   # for a previously configured node.
-  if [ -e "$CONFIG_FILE" ] || [ -L "$CONFIG_FILE" ]; then
+  if as_node_owner test -e "$CONFIG_FILE" || as_node_owner test -L "$CONFIG_FILE"; then
     die 'node configuration already exists; preserve it and manage this node manually or choose a new VPN233_NODE_ROOT'
   fi
   ensure_certs
   ensure_mihomo
   install_config
-  if [ -x "$MIHOMO_BIN" ]; then
-    as_root "$MIHOMO_BIN" -t -d "$CONFIG_DIR" >/dev/null 2>&1 || die 'Mihomo rejected the generated configuration; service was not started'
+  if as_node_owner test -x "$MIHOMO_BIN"; then
+    as_node_owner "$MIHOMO_BIN" -t -d "$CONFIG_DIR" >/dev/null 2>&1 || die 'Mihomo rejected the generated configuration; service was not started'
   fi
   install_service
   open_firewall

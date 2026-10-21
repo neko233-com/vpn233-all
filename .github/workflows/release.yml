@@ -47,7 +47,7 @@ jobs:
             platform: windows-x86_64
             reuse: Windows
             exe: .exe
-          - os: macos-latest
+          - os: macos-26-intel
             target: x86_64-apple-darwin
             platform: macos-x86_64
             reuse: ""
@@ -120,17 +120,10 @@ jobs:
           for name in vpn233-provider-server vpn233-subscribe-server vpn233-client; do
             test "$(lipo -archs "$BIN_DIR/$name")" = "$expected_arch"
           done
-          case "$(uname -m):$TARGET" in
-            arm64:aarch64-apple-darwin|x86_64:x86_64-apple-darwin) ;;
-            arm64:x86_64-apple-darwin)
-              if ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
-                echo '::warning title=macOS Intel runtime coverage::Rosetta unavailable: Intel binaries were cross-compiled and architecture checked; version/runtime E2E was not executed.'
-                printf '### macOS Intel: compile-only\n\nRosetta unavailable. Architecture checked; version/runtime E2E was not executed. Apple Silicon runtime validation remains mandatory.\n' >> "$GITHUB_STEP_SUMMARY"
-                exit 0
-              fi
-              ;;
-            *) echo 'Apple Silicon runtime validation requires a native arm64 host' >&2; exit 1 ;;
-          esac
+          test "$(uname -m)" = "$expected_arch" || {
+            echo 'macOS runtime validation requires the matching native architecture' >&2
+            exit 1
+          }
           for name in vpn233-provider-server vpn233-subscribe-server vpn233-client; do
             "$BIN_DIR/$name" --version
           done

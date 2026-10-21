@@ -655,6 +655,89 @@ async fn generated_sh_writes_config_into_custom_node_root() {
     assert!(stdout.contains("deployment finished"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn generated_sh_writable_node_root_does_not_invoke_available_sudo() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let bash = find_bash().expect("bash is required for Unix installer regression");
+    let (app, _state) = test_app().await;
+    let token = login_token(&app).await;
+    let (_, script) = call(&app, "GET", "/api/v1/generate.sh", Some(&token)).await;
+    let temp = TempDir::new().unwrap();
+    let shims = temp.path().join("tools");
+    std::fs::create_dir(&shims).unwrap();
+    let marker = temp.path().join("sudo-called");
+    let actual_uid = Command::new("id").arg("-u").output().unwrap();
+    assert!(actual_uid.status.success());
+    let actual_uid: u32 = String::from_utf8(actual_uid.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // Exercise the non-root dispatch even when a local Docker test runs as root.
+    // CI and the explicit non-root Docker run also verify real file ownership.
+    for (name, contents) in [
+        (
+            "id",
+            "#!/bin/sh\nif [ \"$1\" = '-u' ]; then printf '%s\\n' \"$VPN233_TEST_UID\"; else /usr/bin/id \"$@\"; fi\n",
+        ),
+        (
+            "sudo",
+            "#!/bin/sh\nprintf 'unexpected elevation\\n' >> \"$VPN233_TEST_SUDO_MARKER\"\nexit 97\n",
+        ),
+    ] {
+        let path = shims.join(name);
+        std::fs::write(&path, contents).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = std::env::join_paths(
+        std::iter::once(shims).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let root = temp.path().join("new custom node").join("nested");
+    let environment = [
+        ("PATH", path.to_string_lossy().into_owned()),
+        ("VPN233_TEST_UID", actual_uid.max(1000).to_string()),
+        ("VPN233_TEST_SUDO_MARKER", forward_slashes(&marker)),
+        ("VPN233_NODE_ROOT", forward_slashes(&root)),
+        ("VPN233_SKIP_DOWNLOAD", "1".into()),
+        ("VPN233_SKIP_SERVICE", "1".into()),
+    ];
+    let output = run_bash_script(&bash, &script, &environment).unwrap();
+    assert!(output.status.success(), "user-owned node deployment failed");
+    assert!(!marker.exists(), "writable node root invoked sudo");
+    let config = root.join("mihomo/config.yaml");
+    assert!(std::fs::read_to_string(&config)
+        .unwrap()
+        .contains("mixed-port: 7890"));
+    for path in [config, root.join("mihomo/certs/node.key")] {
+        let metadata = std::fs::metadata(path).unwrap();
+        assert_eq!(metadata.uid(), actual_uid);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
+    assert_eq!(
+        std::fs::metadata(root.join("mihomo"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    if actual_uid != 0 {
+        // A protected system parent must still request elevation. The sudo
+        // fixture fails before any command can create a system directory.
+        let protected = Path::new("/etc").join(temp.path().file_name().unwrap());
+        assert!(!protected.exists());
+        let mut protected_environment = environment.to_vec();
+        protected_environment.push(("VPN233_NODE_ROOT", forward_slashes(&protected)));
+        let output = run_bash_script(&bash, &script, &protected_environment).unwrap();
+        assert!(!output.status.success());
+        assert!(marker.is_file(), "protected system root lost elevation");
+        assert!(!protected.exists(), "sudo fixture permitted system writes");
+    }
+}
+
 #[tokio::test]
 async fn generated_sh_dry_run_does_not_touch_the_filesystem() {
     let Some(bash) = find_bash() else {

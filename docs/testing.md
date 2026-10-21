@@ -57,3 +57,5 @@ GitHub Pages 使用 `docs/_config.yml` 中的 `jekyll-relative-links`，在构�
 版本由根 `Cargo.toml`、`version.txt`、前端包及 lockfile 同步，通过 `scripts/release.sh` / `scripts/release.ps1` 的 prepare 模式修改，按脚本帮助使用。仅维护 `main`。
 
 `vMAJOR.MINOR.PATCH` 标签触发可复用 CI 验证，再构建 Linux x86_64、Windows x86_64、macOS x86_64 / arm64。每包只含三个二进制、前端、公开模板、脚本与文档。发布前验证 SHA256SUMS、内容和隐私；发布后再次核对下载。不得在 CI、完整验证、E2E、校验和、前端未全绿时发布。
+
+macOS 两种架构分别使用 [GitHub 官方原生运行器](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)，发布工作流要求二进制架构、三个程序版本检查和真实回环 E2E 全部通过。

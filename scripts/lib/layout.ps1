@@ -3,7 +3,7 @@ function Read-Vpn233Layout {
     param([string]$Base)
     $file = Join-Path $Base '.vpn233-layout'
     if (-not (Test-Path -LiteralPath $file)) { return $null }
-    $item = Get-Item -LiteralPath $file
+    $item = Get-Item -LiteralPath $file -Force
     if ($item.PSIsContainer -or $item.Attributes -band [IO.FileAttributes]::ReparsePoint -or $item.Length -gt 65536) { throw 'Invalid private runtime layout file.' }
     $lines = [IO.File]::ReadAllLines($file)
     if ($lines.Count -ne 6 -or $lines[0] -cne 'vpn233-layout-v1') { throw 'Invalid private runtime layout format.' }

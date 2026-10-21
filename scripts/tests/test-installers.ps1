@@ -105,6 +105,13 @@ try {
     Move-Item -LiteralPath (Join-Path $prefix 'config') -Destination $customConfig
     Move-Item -LiteralPath (Join-Path $prefix 'data') -Destination $customData
     Save-Vpn233Layout $prefix user $customBin $customWeb $customConfig $customData
+    $layoutFile = Join-Path $prefix '.vpn233-layout'
+    $attributes = [IO.File]::GetAttributes($layoutFile)
+    try {
+        if ($env:OS -eq 'Windows_NT') { [IO.File]::SetAttributes($layoutFile, ($attributes -bor [IO.FileAttributes]::Hidden)) }
+        $hiddenLayout = Read-Vpn233Layout $prefix
+        Assert-True 'hidden runtime layout round-trips custom paths' ($hiddenLayout['config'] -eq $customConfig -and $hiddenLayout['bin'] -eq $customBin)
+    } finally { if ($env:OS -eq 'Windows_NT') { [IO.File]::SetAttributes($layoutFile, $attributes) } }
     foreach ($scriptName in @('install.ps1', 'update.ps1', 'stop.ps1')) { Copy-Item -LiteralPath (Join-Path $repository $scriptName) -Destination (Join-Path $prefix $scriptName) -Force }
     $env:VPN233_UPDATE_BUNDLE = $archive; $env:VPN233_UPDATE_SHA256 = $hash
     $installedUpdater = Join-Path $prefix 'update.ps1'
