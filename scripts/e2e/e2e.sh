@@ -215,7 +215,6 @@ PROVIDER_PORT="$(free_port)"
 CLIENT_SOCKS_PORT="$(free_port)"
 CLIENT_HTTP_PORT="$(free_port)"
 CLIENT_WEB_PORT="$(free_port)"
-ECHO_PORT="$(free_port)"
 
 SUB_ADMIN_PASSWORD="sub-$(random_hex 12)"
 PROVIDER_ADMIN_PASSWORD="prov-$(random_hex 12)"
@@ -232,7 +231,6 @@ EXPIRED_PASSWORD="expiredpass$(random_hex 10)"
 SUB_BASE="$(http_base "$SUB_PORT")"
 PROVIDER_BASE="$(http_base "$PROVIDER_PORT")"
 CLIENT_WEB_BASE="$(http_base "$CLIENT_WEB_PORT")"
-ECHO_BASE="$(http_base "$ECHO_PORT")"
 
 # --- test node links (only reserved example domains) ---------------------
 VLESS_LINK="vless://11111111-1111-4111-8111-111111111111@example.invalid:443?security=tls&type=ws&path=%2Fws&sni=example.invalid&fp=chrome#vless-e2e"
@@ -599,17 +597,42 @@ step_end
 
 # --- client proxy --------------------------------------------------------
 step_begin "client proxy (SOCKS5 and HTTP)"
-"$PYTHON" "$ROOT_DIR/scripts/e2e/echo_server.py" --port "$ECHO_PORT" --marker "vpn233-e2e-echo" \
+ECHO_READY="$WORK_DIR/echo.ready"
+"$PYTHON" "$ROOT_DIR/scripts/e2e/echo_server.py" --port 0 --ready-file "$ECHO_READY" --marker "vpn233-e2e-echo" \
   >"$LOG_DIR/echo.log" 2>&1 &
 ECHO_PID=$!
 PIDS+=("$ECHO_PID")
-wait_for_http "$ECHO_BASE/" 15 || fail "echo server did not start on $ECHO_BASE"
+deadline=$(( $(date +%s) + 15 ))
+ECHO_PORT=""
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  if ! kill -0 "$ECHO_PID" 2>/dev/null; then
+    echo_status=0
+    wait "$ECHO_PID" || echo_status=$?
+    fail "echo fixture exited before readiness (exit=$echo_status; log contents remain local)"
+  fi
+  if [ -s "$ECHO_READY" ] && [ ! -L "$ECHO_READY" ]; then
+    if IFS= read -r ECHO_PORT < "$ECHO_READY"; then
+      [[ "$ECHO_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$ECHO_PORT" -le 65535 ] || fail "echo fixture readiness has an invalid port (value redacted)"
+      break
+    fi
+    ECHO_PORT=""
+  fi
+  sleep 0.1
+done
+[ -n "$ECHO_PORT" ] || fail "echo fixture did not publish readiness within 15 seconds"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) ;;
+  *) [ "$(stat -c '%a' "$ECHO_READY")" = 600 ] || fail "echo fixture readiness is not private" ;;
+esac
+ECHO_BASE="$(http_base "$ECHO_PORT")"
+remaining=$(( deadline - $(date +%s) ))
+[ "$remaining" -gt 0 ] && wait_for_http "$ECHO_BASE/" "$remaining" || fail "echo fixture did not serve HTTP before the readiness deadline"
 
 socks_body="$(curl -sS --max-time 20 --socks5-hostname "127.0.0.1:$CLIENT_SOCKS_PORT" "$ECHO_BASE/echo/socks")" ||
   fail "SOCKS5 proxy request failed"
 case "$socks_body" in
   *vpn233-e2e-echo*'/echo/socks'*) ;;
-  *) fail "SOCKS5 proxy returned unexpected body: $socks_body" ;;
+  *) fail "SOCKS5 proxy returned unexpected body (response redacted)" ;;
 esac
 note "SOCKS5 proxy request reached the echo server"
 
@@ -617,7 +640,7 @@ http_body="$(curl -sS --max-time 20 -x "http://127.0.0.1:$CLIENT_HTTP_PORT" "$EC
   fail "HTTP proxy request failed"
 case "$http_body" in
   *vpn233-e2e-echo*'/echo/http'*) ;;
-  *) fail "HTTP proxy returned unexpected body: $http_body" ;;
+  *) fail "HTTP proxy returned unexpected body (response redacted)" ;;
 esac
 note "HTTP proxy request reached the echo server"
 step_end

@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1] - 2026-10-21
+
+- Start the loopback HTTP test fixture without reverse DNS, avoiding the known
+  macOS runner hostname-lookup stall. Read the kernel-assigned listening port
+  from a private readiness file instead of releasing a port before binding it.
+- Add startup and shutdown regression coverage while retaining both native
+  macOS architecture checks and the complete real-service E2E release gate.
+
 ## [2.0.0] - 2026-10-21
 
 - Expand subscription imports to URI, Base64/Base64URL, Clash/Mihomo YAML and
