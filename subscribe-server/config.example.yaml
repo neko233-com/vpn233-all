@@ -1,6 +1,10 @@
 server:
   host: "0.0.0.0"
   http_port: 23444
+  # Default format for /sub (any format id or alias from GET /api/v1/formats):
+  # clash|mihomo, singbox|sing-box, v2ray|v2rayn|base64|shadowrocket|hiddify|nekobox,
+  # links, surge, quantumultx|qx, loon, surfboard, stash.
+  # Clients can override it per request with ?format=<id>.
   default_format: "clash"
   data_dir: "./subscribe-server/data"
   admin_user: "root"

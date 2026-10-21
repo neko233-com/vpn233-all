@@ -9,5 +9,19 @@ subscription_url: ""
 stats_file: "vpn233-client/data/stats.json"
 # Daily boundaries use Asia/Shanghai by default; set 0 for UTC.
 stats_timezone_offset_hours: 8
-# Optional no-auth SOCKS5 upstream, e.g. "127.0.0.1:7891" when Mihomo runs locally.
+# Set upstream_mode to socks5 (required) or auto (when configured) to chain.
+# A local external core may listen at 127.0.0.1:7891. Credentials may be supplied
+# in socks5://user:password@host:port form or via the two separate fields below.
 upstream_socks5: ""
+upstream_socks5_user: ""
+upstream_socks5_password: ""
+# Optional local proxy authentication. Supply both fields to enable it.
+socks_user: ""
+socks_password: ""
+http_user: ""
+http_password: ""
+# Destination recording is opt-in. Aggregate byte totals remain available.
+record_domains: false
+# /proxy.pac advertises this host; empty pac generates a local proxy script.
+pac_proxy_host: "127.0.0.1"
+pac: ""

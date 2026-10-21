@@ -21,6 +21,11 @@ admin-web/dist/
 data/
 runtime/
 cache/
+.cache/
+config/
+.vpn233-layout
+logs/
+/_site/
 secrets/
 config.local.yaml
 config.local.json
@@ -58,6 +63,31 @@ links.txt
 # Legacy source may contain local migration material
 legacy/**/data/
 legacy/**/config.local.*
+
+# Documentation site build (GitHub Pages / Jekyll)
+docs/_site/
+docs/.jekyll-cache/
+docs/.jekyll-metadata
+.jekyll-cache/
+
+# Local verification, agent build directories, and E2E scratch space
+target-agent-*/
+target-clippy-*/
+target-verify-*/
+tmp/
+__pycache__/
+*.pyc
+coverage/
+*.profraw
+*.profdata
+mirror-cache
+backups/
+
+# Release/checksum files generated locally
+/dist/
+SHA256SUMS
+*.sha256
+*.sha256sum
 
 # IDE/OS
 .vscode/

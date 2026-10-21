@@ -1,0 +1,18 @@
+{
+  "listen_addr": ":8443",
+  "dest_addr": "www.microsoft.com:443",
+  "private_key": "change-me",
+  "short_ids": ["sid12345"],
+  "users": [
+    {
+      "username": "neko233",
+      "password": "change-me",
+      "uuid": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "web_addr": "127.0.0.1:8083",
+  "web_username": "root",
+  "web_password": "change-me",
+  "log_file": "vpn233-server.log",
+  "log_max_size": 10485760
+}

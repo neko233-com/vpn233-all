@@ -1,9 +1,45 @@
+//! Rust core compatibility layer for VPN233.
+//!
+//! This crate is the shared boundary between VPN233's services and the proxy
+//! clients they serve. It provides:
+//!
+//! - a Clash/Mihomo compatible [`ProxyNode`] model and configuration renderer;
+//! - share-link parsing and rendering for every supported protocol;
+//! - subscription rendering for Clash/Mihomo, sing-box, v2rayN/v2rayNG,
+//!   raw links, Surge, Quantumult X, Loon, Surfboard and Stash;
+//! - extension points for custom protocol adapters.
+//!
+//! TUN handling, kernel routing and the actual proxy transports remain the
+//! responsibility of the upstream runtime; this crate only produces and
+//! consumes configuration.
+
 use serde::Serialize;
-use serde_yaml::{Mapping, Value};
+use serde_yaml::Value;
 use std::collections::BTreeMap;
 
+pub mod clash;
+pub mod formats;
+pub mod import;
+pub mod link;
+pub mod nodes;
+pub mod singbox;
+pub mod text;
+
+pub use clash::render_clash_config;
+pub use formats::{
+    format_capabilities, render_subscription, FormatCapability, RenderError, SubscriptionFormat,
+};
+pub use import::parse_subscription;
+pub use link::{parse_link, parse_links, render_link, LinkError};
+pub use singbox::render_singbox_config;
+pub use text::{
+    render_loon_config, render_quantumultx_config, render_surfboard_config, render_surge_config,
+};
+
+/// A single proxy definition using the Clash/Mihomo field names.
 pub type ProxyNode = BTreeMap<String, Value>;
 
+/// Full client configuration model used by `vpn233-client`.
 #[derive(Debug, Clone, Serialize)]
 pub struct CoreConfig {
     pub mixed_port: u16,
@@ -13,12 +49,14 @@ pub struct CoreConfig {
     pub rules: Vec<RouteRule>,
 }
 
+/// One routing rule.
 #[derive(Debug, Clone, Serialize)]
 pub struct RouteRule {
     pub matcher: String,
     pub target: String,
 }
 
+/// A typed outbound definition that can be converted into a [`ProxyNode`].
 #[derive(Debug, Clone, Serialize)]
 pub struct Outbound {
     pub tag: String,
@@ -29,6 +67,7 @@ pub struct Outbound {
 }
 
 impl Outbound {
+    /// Converts this outbound into a proxy node.
     pub fn into_proxy_node(self) -> ProxyNode {
         let mut node = proxy_node(&self.tag, &self.kind, &self.server, self.port);
         node.extend(self.options);
@@ -36,22 +75,28 @@ impl Outbound {
     }
 }
 
+/// Extension point for protocol adapters that are not part of the built-in set.
 pub trait CustomProtocol: Send + Sync {
+    /// Unique protocol name.
     fn protocol_name(&self) -> &'static str;
+    /// Converts a generic node into a protocol specific node.
     fn render_proxy(&self, input: &ProxyNode) -> Result<ProxyNode, String>;
 }
 
+/// Registry for [`CustomProtocol`] implementations.
 #[derive(Default)]
 pub struct ProtocolRegistry {
     protocols: BTreeMap<String, Box<dyn CustomProtocol>>,
 }
 
 impl ProtocolRegistry {
+    /// Registers (or replaces) a custom protocol.
     pub fn register(&mut self, protocol: impl CustomProtocol + 'static) {
         self.protocols
             .insert(protocol.protocol_name().into(), Box::new(protocol));
     }
 
+    /// Renders a node through a registered custom protocol.
     pub fn render(&self, name: &str, input: &ProxyNode) -> Result<ProxyNode, String> {
         self.protocols
             .get(name)
@@ -60,33 +105,27 @@ impl ProtocolRegistry {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct ClashConfig {
-    #[serde(rename = "mixed-port")]
-    mixed_port: u16,
-    #[serde(rename = "allow-lan")]
-    allow_lan: bool,
-    mode: &'static str,
-    #[serde(rename = "log-level")]
-    log_level: &'static str,
-    proxies: Vec<ProxyNode>,
-    #[serde(rename = "proxy-groups")]
-    proxy_groups: Vec<Value>,
-    rules: Vec<String>,
+/// Every protocol the compatibility layer supports.
+pub fn supported_protocols() -> &'static [&'static str] {
+    formats::SUPPORTED_PROTOCOLS
 }
 
+/// Builds a YAML string value.
 pub fn string(value: impl Into<String>) -> Value {
     Value::String(value.into())
 }
 
+/// Builds a YAML numeric value.
 pub fn number(value: u64) -> Value {
     Value::Number(value.into())
 }
 
+/// Builds a YAML boolean value.
 pub fn boolean(value: bool) -> Value {
     Value::Bool(value)
 }
 
+/// Builds a minimal proxy node with the required Clash/Mihomo fields.
 pub fn proxy_node(name: &str, kind: &str, server: &str, port: u16) -> ProxyNode {
     let mut node = ProxyNode::new();
     node.insert("name".into(), string(name));
@@ -96,118 +135,14 @@ pub fn proxy_node(name: &str, kind: &str, server: &str, port: u16) -> ProxyNode 
     node
 }
 
-pub fn render_clash_config(nodes: &[ProxyNode]) -> Result<String, serde_yaml::Error> {
-    let names: Vec<Value> = nodes
-        .iter()
-        .filter_map(|node| node.get("name").cloned())
-        .collect();
-    let group_names = if names.is_empty() {
-        vec![string("DIRECT")]
-    } else {
-        names.clone()
-    };
-
-    let mut select = Mapping::new();
-    select.insert(string("name"), string("VPN233"));
-    select.insert(string("type"), string("select"));
-    select.insert(string("proxies"), Value::Sequence(group_names.clone()));
-
-    let mut auto = Mapping::new();
-    auto.insert(string("name"), string("VPN233 Auto"));
-    auto.insert(string("type"), string("url-test"));
-    auto.insert(string("proxies"), Value::Sequence(group_names.clone()));
-    auto.insert(
-        string("url"),
-        string("https://www.gstatic.com/generate_204"),
-    );
-    auto.insert(string("interval"), number(300));
-
-    let mut fallback = Mapping::new();
-    fallback.insert(string("name"), string("VPN233 Fallback"));
-    fallback.insert(string("type"), string("fallback"));
-    fallback.insert(string("proxies"), Value::Sequence(group_names));
-    fallback.insert(
-        string("url"),
-        string("https://www.gstatic.com/generate_204"),
-    );
-    fallback.insert(string("interval"), number(300));
-
-    let mut proxies = Mapping::new();
-    proxies.insert(string("name"), string("Proxies"));
-    proxies.insert(string("type"), string("select"));
-    proxies.insert(
-        string("proxies"),
-        Value::Sequence(vec![string("VPN233 Auto"), string("VPN233 Fallback")]),
-    );
-
-    let service_groups = [
-        ("Netflix", "netflix"),
-        ("HBO", "hbo"),
-        ("DisneyPlus", "disney"),
-        ("YouTube", "youtube"),
-        ("Bahamut", "bahamut"),
-        ("Bilibili", "bilibili"),
-        ("MyTVSuper", "mytvsuper"),
-        ("AI", "category-ai-!cn"),
-        ("Telegram", "telegram"),
-        ("Crypto", "category-cryptocurrency"),
-        ("Steam", "steam"),
-        ("Epic", "epicgames"),
-        ("Xbox", "xbox"),
-        ("PlayStation", "playstation"),
-        ("Microsoft", "microsoft"),
-        ("Scholar", "scholar"),
-        ("Apple", "apple"),
-        ("Google", "google"),
-        ("TikTok", "tiktok"),
-    ];
-    let mut service_group_values = Vec::new();
-    for (name, _) in service_groups {
-        let mut group = Mapping::new();
-        group.insert(string("name"), string(name));
-        group.insert(string("type"), string("select"));
-        group.insert(
-            string("proxies"),
-            Value::Sequence(vec![string("Proxies"), string("DIRECT")]),
-        );
-        service_group_values.push(Value::Mapping(group));
-    }
-
-    let config = ClashConfig {
-        mixed_port: 7890,
-        allow_lan: false,
-        mode: "rule",
-        log_level: "info",
-        proxies: nodes.to_vec(),
-        proxy_groups: vec![
-            Value::Mapping(select),
-            Value::Mapping(auto),
-            Value::Mapping(fallback),
-            Value::Mapping(proxies),
-        ]
-        .into_iter()
-        .chain(service_group_values)
-        .collect(),
-        // Keep subscription output self-contained. GEOSITE/GEOIP rules make
-        // Clash Verge download external geodata during import, which can
-        // fail behind restricted networks and roll back an otherwise valid
-        // subscription. Users can still choose service groups manually.
-        rules: vec![
-            "DOMAIN-SUFFIX,local,DIRECT".into(),
-            "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve".into(),
-            "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve".into(),
-            "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve".into(),
-            "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve".into(),
-            "MATCH,VPN233".into(),
-        ],
-    };
-    serde_yaml::to_string(&config)
-}
-
+/// Renders the raw share links of the given nodes, one per line.
+///
+/// Nodes without an internal `vpn233-link` attribute are skipped; use
+/// [`render_link`] to synthesize a link from a node.
 pub fn render_links(nodes: &[ProxyNode]) -> String {
     nodes
         .iter()
-        .filter_map(|node| node.get("vpn233-link").and_then(Value::as_str))
+        .filter_map(|node| node.get(link::LINK_KEY).and_then(Value::as_str))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -257,5 +192,52 @@ mod tests {
         let body = render_clash_config(&[]).unwrap();
         assert!(body.contains("name: VPN233"));
         assert!(body.contains("- DIRECT"));
+    }
+
+    #[test]
+    fn supported_protocols_are_exposed() {
+        assert_eq!(
+            supported_protocols(),
+            &[
+                "vless",
+                "vmess",
+                "trojan",
+                "ss",
+                "ssr",
+                "hysteria2",
+                "tuic",
+                "anytls",
+                "socks5",
+                "http",
+                "hysteria",
+                "wireguard",
+                "snell",
+                "ssh",
+                "mieru",
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_render_links_uses_the_internal_link_attribute() {
+        let mut node = proxy_node("node", "ss", "example.invalid", 8388);
+        node.insert("vpn233-link".into(), string("ss://example"));
+        assert_eq!(render_links(&[node]), "ss://example");
+    }
+
+    #[test]
+    fn outbound_conversion_keeps_custom_options() {
+        let mut options = ProxyNode::new();
+        options.insert("password".into(), string("secret"));
+        let outbound = Outbound {
+            tag: "node".into(),
+            kind: "trojan".into(),
+            server: "example.invalid".into(),
+            port: 443,
+            options,
+        };
+        let node = outbound.into_proxy_node();
+        assert_eq!(node.get("type"), Some(&string("trojan")));
+        assert_eq!(node.get("password"), Some(&string("secret")));
     }
 }

@@ -1,0 +1,61 @@
+# Normalize line endings so the repository works on Windows, Linux and macOS.
+* text=auto
+
+# Shell scripts and Unix launchers must keep LF even on Windows checkouts.
+*.sh text eol=lf
+*.bash text eol=lf
+*.command text eol=lf
+*.service text eol=lf
+
+# PowerShell and cmd scripts must keep CRLF for Windows PowerShell 5.1.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Source and documentation files keep LF.
+*.rs text eol=lf
+*.md text eol=lf
+*.markdown text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.lock text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.py text eol=lf
+*.txt text eol=lf
+*.sha256 text eol=lf
+LICENSE text eol=lf
+.dockerignore text eol=lf
+Dockerfile text eol=lf
+Makefile text eol=lf
+
+# Release artifacts, images and compiled binaries are binary.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.svg text eol=lf
+*.exe binary
+*.dll binary
+*.pdb binary
+*.so binary
+*.dylib binary
+*.gz binary
+*.tgz binary
+*.zip binary
+*.tar binary
+*.7z binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

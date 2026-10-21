@@ -1,9 +1,3 @@
 @echo off
-setlocal enabledelayedexpansion
-
-:: 调用 PowerShell 脚本执行核心逻辑
-powershell -ExecutionPolicy Bypass -File "release.ps1"
-
-exit /b
-
-pause
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\release.ps1" -Publish %*
+exit /b %ERRORLEVEL%

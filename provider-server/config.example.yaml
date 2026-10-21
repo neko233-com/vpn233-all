@@ -1,19 +1,71 @@
+# vpn233 provider-server example configuration.
+# Copy this file to an untracked config.yaml (or run --init) and replace every
+# placeholder before exposing the service. Never commit a real config.yaml.
+
 listen_addr: "0.0.0.0"
 listen_port: 8080
+
+# First-boot admin credentials. Change the password before public exposure, or
+# supply it through VPN233_ADMIN_PASSWORD / VPN233_ADMIN_PASSWORD_FILE.
 admin_user: "root"
-admin_password: "root"
+admin_password: "change-me-admin-password"
+
+# Advertised node address. "auto" performs a local-only interface detection
+# (no third-party IP lookup service is ever contacted).
 default_node_ip: "auto"
+auto_detect_public_ip: true
+
+# Base port of the generated node manifest. Every enabled protocol is assigned
+# base + offset: vless +0, vmess +1, trojan +2, ss +3, hysteria2 +4, tuic +5,
+# anytls +6, socks5 +7.
 default_port_base: 10000
-# Required for the private node feed consumed by subscribe-server.
+
+# Protocols exposed by /api/v1/generate. Remove entries to disable them; an
+# empty list means "all supported protocols".
+enabled_protocols:
+  - "vless"
+  - "vmess"
+  - "trojan"
+  - "ss"
+  - "hysteria2"
+  - "tuic"
+  - "anytls"
+  - "socks5"
+
+# Required for the private node feed consumed by subscribe-server. The feed is
+# disabled when this is empty.
 provider_access_token: "change-me-provider-feed-token"
-# Optional pinned Mihomo asset used by deployment tooling. Leave empty only when Mihomo is managed separately.
-mihomo_url: "https://github.com/MetaCubeX/mihomo/releases/latest/download/mihomo-linux-amd64-compatible-v1.gz"
+
+# Pinned Mihomo release used by the generated node deployment scripts.
+mihomo_version: "v1.19.32"
+# Optional explicit, platform-specific release asset URL (overrides the pin).
+mihomo_url: ""
+# Optional for the pinned version: official GitHub SHA256 digests for supported
+# assets are embedded in generated scripts. Other versions/assets need this
+# checksum; missing and mismatched checksums fail closed by default.
 mihomo_sha256: ""
+# GitHub mirror prefixes, in contract order. The empty string means direct.
+download_mirrors:
+  - "https://ghproxy.net/"
+  - "https://gh.llkk.cc/"
+  - "https://ghfast.top/"
+  - "https://gh-proxy.com/"
+  - ""
+# Default root of the generated bash deployment script (override per run with
+# VPN233_NODE_ROOT). The PowerShell script defaults to %ProgramData%\vpn233.
+node_root: "/etc/vpn233"
+
+# Admin session lifetime (12 hours by default) and the failed-login budget per
+# client inside a 60 second window.
+session_ttl_secs: 43200
+login_rate_limit: 10
+
 subscribe_verify_token: ""
-# Real provider links are kept in the untracked config.yaml or an environment-managed file.
-# node_links:
-#   - "vless://uuid@example.invalid:443?security=reality&type=tcp&pbk=public-key&sid=short-id&sni=example.invalid&fp=chrome&flow=xtls-rprx-vision#provider"
+
+# Real provider links are kept in the untracked config.yaml or managed by the
+# subscription server. When empty, links are generated from the manifest.
 node_links: []
+
 # Optional: register this provider with a subscribe-server registry.
 # Keep the registry token in an untracked config.yaml or environment variable.
 registry_url: "http://127.0.0.1:23444"
@@ -22,5 +74,5 @@ registry_provider_id: "provider-local-01"
 registry_name: "provider-local"
 heartbeat_interval_secs: 30
 advertise_addresses:
-  - kind: local
+  - kind: "local"
     value: "127.0.0.1"

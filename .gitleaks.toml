@@ -1,0 +1,25 @@
+# Gitleaks configuration for the VPN233 repository.
+#
+# The CI security job runs:
+#   gitleaks detect --source /repo --config /gitleaks.toml --redact --verbose --exit-code 1
+# after a full-history checkout. Default rules are enabled; the allowlists below
+# only cover synthetic placeholders used by tests and documentation.
+title = "VPN233 gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic documentation and test placeholders that never grant access."
+regexTarget = "match"
+regexes = [
+  '''(?i)change-me''',
+  '''(?i)example\.invalid''',
+  '''(?i)example\.com''',
+  '''(?i)your[-_ ]?token[-_ ]?here''',
+  '''(?i)replace[-_ ]?me''',
+  '''(?i)placeholder''',
+  '''(?i)REDACTED''',
+  '''(?i)00000000-0000-0000-0000-000000000000''',
+  '''(?i)vpn233-e2e''',
+]

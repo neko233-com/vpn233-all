@@ -1,0 +1,53 @@
+{
+  "inbounds": [
+    {
+      "type": "socks",
+      "listen": "127.0.0.1",
+      "port": 1080
+    },
+    {
+      "type": "http",
+      "listen": "127.0.0.1",
+      "port": 1081
+    },
+    {
+      "type": "tun",
+      "name": "vpn233-tun0",
+      "address": "10.0.0.1/24",
+      "mtu": 1500,
+      "enabled": true
+    }
+  ],
+  "dns": {
+    "listen": "127.0.0.1:5353",
+    "nameservers": ["8.8.8.8", "1.1.1.1"]
+  },
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "type": "vpn",
+      "server": "127.0.0.1",
+      "port": 8443,
+      "username": "neko233",
+      "password": "change-me",
+      "uuid": "00000000-0000-0000-0000-000000000000",
+      "short_id": "change-me",
+      "public_key": "change-me",
+      "sni": "www.microsoft.com"
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    },
+    {
+      "tag": "reject",
+      "type": "reject"
+    }
+  ],
+  "rules_file": "rules.yaml",
+  "web_addr": "127.0.0.1:8082",
+  "web_username": "root",
+  "web_password": "change-me",
+  "log_file": "vpn233-client.log",
+  "log_max_size": 10485760
+}

@@ -1,90 +1,66 @@
-# VPN233 Rust
+# VPN233
 
-VPN233 Rust is a memory-safe rewrite of the VPN233 provider, subscription, and client services.
+Self-hosted proxy deployment, subscription conversion and a local admin console. Rust services and a bundled React UI run without third-party analytics, web fonts or CDNs.
 
-The workspace contains the three runtime services requested by the project:
+[中文](README.zh-CN.md) · [Documentation](https://neko233-com.github.io/vpn233-all/) · [Releases](https://github.com/neko233-com/vpn233-all/releases) · [Security](SECURITY.md)
 
-- `provider-server`: authenticated provider API and `.sh` / `.ps1` node installers.
-- `subscribe-server`: local/remote subscription aggregation, password-protected Clash/Mihomo output, token quotas with calendar/creation-day reset cycles, expiry and renewal APIs, and the embedded admin API.
-- `vpn233-client`: local SOCKS5 and HTTP proxy entry points with connection and byte counters.
+## Install
 
-Shared Clash/Mihomo-compatible models and protocol extension points live in `vpn233-core-lib-rust`. The `admin-web` directory is the Vite/React control room served by `subscribe-server` in production.
-
-## Security defaults
-
-- The default administrator is `root` / `root` for first boot only.
-- Set `VPN233_ADMIN_USER` and `VPN233_ADMIN_PASSWORD` or change the YAML values before exposing a service publicly.
-- Subscription access requires both a token and its separate password. Passwords are stored as Argon2id hashes.
-- Real configuration files, runtime data, generated installers, bundles, and secrets are ignored by Git. Do not commit `config.yaml`, service-unit overrides, SSH material, or exported subscription links.
-
-## Build
-
-Requirements: Rust 1.85 or newer and Node.js 20 or newer for the admin web build.
+Linux / macOS:
 
 ```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo build --release --workspace
-
-cd admin-web
-npm ci
-npm run build
+setup="$(mktemp)"
+(curl -fL --connect-timeout 5 --max-time 30 https://ghproxy.net/https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.sh -o "$setup" ||
+ curl -fL --connect-timeout 5 --max-time 30 https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.sh -o "$setup") &&
+bash "$setup" --release --mirror auto
 ```
 
-On Windows, `install.ps1` installs a release bundle's prebuilt `bin/` files when available, or builds all Rust services from source. On Linux/macOS, use `install.sh`. Both scripts support `update` to install a verified release bundle or a locally supplied offline bundle. The installers also copy the bundled `admin-web/dist` static files without touching existing configuration or runtime data.
+Windows PowerShell:
 
-## Local services
+```powershell
+$setup = Join-Path ([IO.Path]::GetTempPath()) ('vpn233-install-' + [guid]::NewGuid().ToString('N') + '.ps1')
+try { Invoke-WebRequest 'https://ghproxy.net/https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }
+catch { Invoke-WebRequest 'https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }
+powershell -NoProfile -ExecutionPolicy Bypass -File $setup -Release -Mirror auto
+```
 
-Copy the relevant `config.example.yaml` to an untracked `config.yaml` and adjust the ports and data paths.
+These commands download the public installer; inspect it before execution when required by your environment. A release asset must exist for your platform. The installer uses GitHub mirror fallback, checks SHA-256 before installation, creates private random credentials, binds new services to loopback and preserves existing configuration/data. Credentials stay in local configuration and are never printed. The default root is the current user's `.vpn233` directory. [Offline installation, upgrades and services](docs/deployment.md).
+
+## Components and compatibility
+
+| Component | Purpose | Default local endpoint |
+| --- | --- | --- |
+| `provider-server` | Node manifests and generated `.sh` / `.ps1` installers | `http://127.0.0.1:8080/api/v1/health` |
+| `subscribe-server` | Subscription aggregation, tokens, quotas and admin UI | `http://127.0.0.1:23444/` |
+| `vpn233-client` | Local HTTP/SOCKS5 proxy and local traffic statistics | `http://127.0.0.1:8082/api/v1/health` |
+| `vpn233-core-lib-rust` | Shared parsers and subscription formats | Library |
+
+Exports include Clash/Mihomo, Stash, sing-box, raw/Base64 links for v2rayN/v2rayNG, Shadowrocket, Hiddify and NekoBox, plus Surge, Quantumult X, Loon and Surfboard. URI imports cover SS, SSR, VMess, VLESS, Trojan, Hysteria2, TUIC, AnyTLS, SOCKS5 and HTTP(S); structured Clash imports also preserve Hysteria, WireGuard, Snell, SSH and Mieru. Each output has its own limits: query `/api/v1/formats` for the exact matrix. [Protocol compatibility](docs/protocols.md).
+
+The local client executes direct or configured SOCKS5 upstream connections. Encrypted transports and TUN require a separately configured compatible core such as Mihomo; subscription conversion does not implement those transports in Rust.
+
+The Mihomo renderer accepts 15 structured protocols; Stash and sing-box each expose a 9-protocol subset. Provider-generated node scripts create 8 inbound types. Protocol listings describe implemented conversions, while actual client versions, TLS trust and remote connectivity still require validation.
+
+## Fast and full verification
+
+Use the pinned Rust toolchain, Node.js 24 and platform build tools.
 
 ```bash
-VPN233_CONFIG=provider-server/config.yaml \
-  ./target/release/vpn233-provider-server
-
-VPN233_CONFIG=subscribe-server/config.yaml \
-  ./target/release/vpn233-subscribe-server
-
-VPN233_CONFIG=vpn233-client/config.yaml \
-  ./target/release/vpn233-client
+bash scripts/verify-all.sh --quick
+bash scripts/verify-all.sh
 ```
 
-Default local endpoints:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-all.ps1 -Quick
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-all.ps1
+```
 
-| Service | Endpoint |
-| --- | --- |
-| Provider | `http://127.0.0.1:8080/api/v1/health` |
-| Subscribe | `http://127.0.0.1:23444/` |
-| Client | `http://127.0.0.1:8082/api/v1/health` |
+Quick verification skips release compilation, real service E2E and network dependency audits. Full verification and CI cover those gates plus installer tests, UI output, privacy, documentation and package checksums. [Testing and packaging](docs/testing.md).
 
-The subscription server exposes `/sub/c?token=...&password=...` for Clash/Mihomo YAML and `/sub/links?token=...&password=...` for raw links. The admin API uses Basic Auth with the configured administrator.
+## Privacy
 
-### Access policy lifecycle
+Live configuration, subscription credentials, runtime data, logs and generated installers must stay out of Git and public bundles. Services contact only configured upstream subscriptions, provider registry and optional statistics relay; generated subscriptions have no default third-party latency probe. The admin UI uses same-origin assets and session-scoped authentication. Local traffic statistics may contain destination hosts when explicitly enabled; protect them as private data. [Privacy](docs/privacy.md).
 
-Subscription access is intentionally separate from billing, orders, and the account system. Those systems can create or renew a token through the authenticated admin API and attach an optional `other_uid` for external reconciliation.
+The source-level default `root` / `root` is for first boot only. Set `VPN233_ADMIN_PASSWORD` before exposing manually started services; use HTTPS and access controls. [API and configuration](docs/api.md).
 
-- `quota_period`: `lifetime`, `calendar_month`, `monthly_from_creation`, `weekly`, or `daily`.
-- `duration`: `seven_days`, `one_month`, or `one_year` when creating or renewing a token. An explicit `expires_at` timestamp takes precedence.
-- `POST /api/admin/tokens/{token}/renew` renews access and can also change the quota period, quota limit, or `other_uid`.
-- `POST /api/admin/tokens/{token}/reset` clears the current period's usage immediately.
-- Expired tokens are automatically revoked and marked `expired`; their records remain for audit and later renewal rather than being physically deleted.
-
-When `provider_registry_token` is configured, a provider can self-register with `registry_url`, send heartbeats, and publish its domain/IP/local addresses and node links. Registered providers are merged into subscriptions while enabled and fresh; `/sub/base64` provides a Base64 link feed for clients that expect that format. The registry token and provider heartbeat tokens are never returned by the admin API.
-
-### Traffic analytics
-
-`vpn233-client` persists Asia/Shanghai daily upload/download totals and the target host for each completed HTTP or SOCKS5 connection in its configured `stats_file` (default: `vpn233-client/data/stats.json`). Its authenticated `/api/v1/stats` endpoint exposes the retained history. To show actual proxy traffic and target hosts in the admin console, set `client_stats_url` and `client_stats_user` in the untracked subscribe config, and provide `VPN233_CLIENT_STATS_PASSWORD` through the service environment. If the relay is not configured, the console intentionally shows only subscription-response traffic and an empty domain state.
-
-## Release bundles
-
-Tag a commit with `vX.Y.Z` to run the GitHub Actions release workflow. It builds the provider, subscribe server, client, and admin UI for Linux, Windows, and macOS, then publishes platform bundles containing example configs and the shell/PowerShell installers.
-
-For an offline update, set `VPN233_UPDATE_BUNDLE` to a local bundle path. For remote updates, optionally set `VPN233_UPDATE_URLS` to a `|`-separated list of trusted URLs and `VPN233_UPDATE_SHA256` to the expected SHA-256 digest.
-
-## Mihomo scope
-
-The Rust core library emits compatible Clash/Mihomo configuration and provides a `CustomProtocol` registry for extensions. It is the stable Rust boundary for future protocol work. Mihomo's complete runtime is not currently available as a stable Rust library, so platform-specific TUN, kernel routing, and transport execution remain an explicitly pinned external Mihomo boundary. The client only enables that boundary when configured; it does not claim unimplemented Rust transports are complete.
-
-## Legacy source
-
-The former Go implementation is retained under `legacy/go-v1/` for migration and rollback reference only. It is not built by the workspace, release workflow, or installation scripts.
+Legacy Go code is migration reference and excluded from builds/releases. [Contributing](CONTRIBUTING.md) · [License](LICENSE).

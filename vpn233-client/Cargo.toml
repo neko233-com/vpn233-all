@@ -13,7 +13,13 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+subtle.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tempfile.workspace = true
+tower.workspace = true

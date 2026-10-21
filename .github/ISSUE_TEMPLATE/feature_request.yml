@@ -1,0 +1,64 @@
+name: Feature request
+description: Propose a new capability or an improvement for VPN233.
+title: "[feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep this request free of credentials, real subscription URLs,
+        server IP addresses and customer data.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you open this issue
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: The request is about self-hosted behaviour that this project actually owns.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - subscription formats / protocol parsing
+        - subscription server / admin API
+        - provider server / node manifests
+        - client proxy / privacy
+        - admin web
+        - install / update / deploy scripts
+        - documentation
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today? Who does it affect?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change and, if relevant, the response format or CLI surface.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: I understand that no telemetry or third-party analytics will be added to the project.
+          required: false
+        - label: I understand that runtime data and credentials must never be published.
+          required: false

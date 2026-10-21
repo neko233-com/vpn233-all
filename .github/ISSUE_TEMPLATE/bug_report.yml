@@ -1,0 +1,91 @@
+name: Bug report
+description: Report a reproducible defect in VPN233 (services, installers, admin web or docs).
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. **Do not paste real
+        subscription URLs, tokens, passwords, server IP addresses or runtime
+        data** — redact them first. Security vulnerabilities belong in the
+        private advisory flow described in SECURITY.md.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you open this issue
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This report contains no credentials, real IPs or subscription URLs.
+          required: true
+        - label: This is not a security vulnerability (those go to SECURITY.md).
+          required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - subscribe-server
+        - provider-server
+        - vpn233-client
+        - admin web
+        - install / update / deploy scripts
+        - documentation
+        - CI / release pipeline
+        - other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Output of `version.txt`, the release tag, or the commit SHA.
+      placeholder: "v2.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux x86_64
+        - Windows x86_64
+        - macOS x86_64
+        - macOS arm64
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, deterministic reproduction steps with redacted values.
+      placeholder: |
+        1. Start the subscribe server with a test config
+        2. Request /sub/clash?token=REDACTED&access_token=REDACTED
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the failing command and the relevant log lines (redacted).
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS version, Rust version, Node version, browser (for admin web), installation mode.
+      placeholder: "Ubuntu 24.04, Rust 1.96.0, Node 24, install.sh --release"
+    validations:
+      required: false

@@ -1,4 +1,3 @@
-git add .
-git commit -m "update"
-git push origin main
-git push github main
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\commit.ps1" %*
+exit /b %ERRORLEVEL%

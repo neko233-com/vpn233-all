@@ -1,0 +1,16 @@
+title: VPN233 文档
+description: 自托管节点部署、订阅转换、镜像加速与自动验证
+theme: minima
+url: https://neko233-com.github.io
+baseurl: /vpn233-all
+lang: zh-CN
+github_username: neko233-com
+header_pages:
+  - getting-started.md
+  - deployment.md
+  - protocols.md
+  - testing.md
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true

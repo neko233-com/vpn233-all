@@ -11,23 +11,37 @@ members = [
 edition = "2021"
 version = "2.0.0"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.96"
 
 [workspace.dependencies]
 anyhow = "1"
 argon2 = "0.5"
 axum = "0.8"
 base64 = "0.22"
+bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
-jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto"] }
+hmac = "0.12"
+http-body-util = "0.1"
+jsonwebtoken = { version = "10.4", default-features = false }
+percent-encoding = "2"
+rand_core = { version = "0.6", features = ["getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
-rand_core = { version = "0.6", features = ["getrandom"] }
+# Keep the source API name while using the YAML organization's maintained fork.
+serde_yaml = { package = "yaml_serde", version = "0.10.7" }
+sha2 = "0.10"
+subtle = "2"
+tempfile = "3"
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "set-header", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+# Smaller, faster-to-download release binaries for the self-hosted bundles.
+[profile.release]
+lto = "thin"
+strip = true
