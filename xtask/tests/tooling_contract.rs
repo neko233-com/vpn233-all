@@ -382,6 +382,47 @@ exit 0
     }
 }
 
+fn report_wrapper_failure(index: usize, path: &std::path::Path, kind: &str, exit: i32) {
+    let data = fs::read(path)
+        .ok()
+        .filter(|bytes| bytes.len() <= 4096)
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    let mut report = serde_json::json!({"engine_index":index,"kind":kind,"driver_exit":exit});
+    for field in [
+        "runtime_major",
+        "runtime_minor",
+        "runtime_patch",
+        "stage",
+        "expected_exit",
+        "native_status",
+        "failure_code",
+    ] {
+        let value = data
+            .as_ref()
+            .and_then(|data| data[field].as_i64())
+            .filter(|number| (i32::MIN as i64..=i32::MAX as i64).contains(number))
+            .unwrap_or(-1);
+        report[field] = value.into();
+    }
+    let scenario = data
+        .as_ref()
+        .and_then(|data| data["scenario"].as_str())
+        .filter(|value| {
+            [
+                "entry",
+                "inherited",
+                "missing",
+                "mixed",
+                "empty",
+                "nonempty",
+            ]
+            .contains(value)
+        })
+        .unwrap_or("unavailable");
+    report["scenario"] = scenario.into();
+    eprintln!("PowerShell wrapper controlled failure: {report}");
+}
+
 #[test]
 fn powershell_bootstrap_isolates_cargo_without_mutating_caller_environment() {
     let root = support::root().unwrap();
@@ -415,8 +456,9 @@ use std::{env, fs::OpenOptions, io::Write, path::Path, process};
 fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
     let expected = env::var_os("VPN233_SYNTHETIC_CARGO_TARGET").unwrap();
+    let target = args.get(6).and_then(|argument| Path::new(argument).canonicalize().ok());
     let arguments_ok = args.len() == 7 && args[..6] == ["build", "--locked", "--quiet", "-p", "vpn233-xtask", "--target-dir"]
-        && Path::new(&args[6]) == Path::new(&expected);
+        && target.is_some() && target == Path::new(&expected).canonicalize().ok();
     let flags_absent = ["CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS", "CARGO_BUILD_TARGET"].iter().all(|key| env::var_os(key).is_none());
     let mut report = OpenOptions::new().write(true).create_new(true).open(env::var_os("VPN233_SYNTHETIC_CARGO_REPORT").unwrap()).unwrap();
     write!(report, "{{\"arguments_ok\":{arguments_ok},\"flags_absent\":{flags_absent}}}").unwrap();
@@ -424,21 +466,18 @@ fn main() {
 }
 "#).unwrap();
     let cargo = bin.join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
-    let compiled = match support::process_output(
-        Command::new("rustc")
-            .args([
-                "--edition=2021",
-                "--crate-name",
-                "vpn233_synthetic_cargo",
-                "-C",
-                "debuginfo=0",
-            ])
-            .arg(&fixture)
-            .arg("-o")
-            .arg(&cargo),
-        None,
-        Duration::from_secs(60),
-    ) {
+    let mut compiler = Command::new("rustc");
+    compiler.args([
+        "--edition=2021",
+        "--crate-name",
+        "vpn233_synthetic_cargo",
+        "-C",
+        "debuginfo=0",
+    ]);
+    #[cfg(windows)]
+    compiler.args(["-C", "target-feature=+crt-static"]);
+    compiler.arg(&fixture).arg("-o").arg(&cargo);
+    let compiled = match support::process_output(&mut compiler, None, Duration::from_secs(60)) {
         Ok(output) => output,
         Err(_) => panic!("native Cargo fixture could not compile; private details withheld"),
     };
@@ -446,6 +485,58 @@ fn main() {
         compiled.status.success(),
         "native Cargo fixture compilation failed; private output withheld"
     );
+    #[cfg(windows)]
+    {
+        let bytes = fs::read(&cargo).unwrap();
+        assert!(
+            vpn233_xtask::verify_release::pe_imports(&bytes).is_ok(),
+            "native Cargo fixture PE is invalid"
+        );
+        assert!(
+            vpn233_xtask::verify_release::windows_binary_rules(&bytes).is_empty(),
+            "native Cargo fixture must meet the production Windows runtime rules"
+        );
+    }
+    for expected in [0, 17] {
+        let report = private
+            .path()
+            .join(format!("native-preflight-{expected}.json"));
+        let target = private.path().join("native target with spaces");
+        fs::create_dir_all(&target).unwrap();
+        let mut command = Command::new(&cargo);
+        command
+            .args([
+                "build",
+                "--locked",
+                "--quiet",
+                "-p",
+                "vpn233-xtask",
+                "--target-dir",
+            ])
+            .arg(&target)
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_BUILD_TARGET")
+            .env("VPN233_SYNTHETIC_CARGO_TARGET", &target)
+            .env("VPN233_SYNTHETIC_CARGO_REPORT", &report)
+            .env("VPN233_SYNTHETIC_CARGO_EXIT", expected.to_string());
+        let output = match support::process_output(&mut command, None, Duration::from_secs(60)) {
+            Ok(output) => output,
+            Err(_) => panic!(
+                "native Cargo fixture preflight could not complete; private details withheld"
+            ),
+        };
+        assert!(
+            output.status.code() == Some(expected),
+            "native Cargo preflight exit mismatch: expected={expected} actual={}",
+            output.status.code().unwrap_or(-1)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert!(
+            result["arguments_ok"] == true && result["flags_absent"] == true,
+            "native Cargo preflight arguments or environment differ"
+        );
+    }
     for (index, shell) in shells.into_iter().enumerate() {
         let workspace = private
             .path()
@@ -465,17 +556,35 @@ fn main() {
         let wrapper = workspace.join("scripts/xtask.ps1");
         fs::copy(root.join("scripts/xtask.ps1"), &wrapper).unwrap();
         let report = workspace.join("controlled-report.json");
+        let diagnostic = workspace.join("controlled-diagnostic.json");
         let driver = workspace.join("environment-driver.ps1");
         fs::write(&driver, r#"
-param([string]$Wrapper,[string]$Report,[string]$Workspace)
+param([string]$Wrapper,[string]$Report,[string]$Workspace,[string]$Diagnostic)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
+$global:LASTEXITCODE=97
+$script:DriverStage=1
+$script:DriverScenario='entry'
+$script:ExpectedExit=-1
+$script:NativeStatus=97
+$script:FailureCode=0
+function Save-WrapperDiagnostic {
+    $v=$PSVersionTable.PSVersion
+    $patch=if($v.PSObject.Properties.Name -contains 'Patch'){$v.Patch}else{$v.Build}
+    $json='{"runtime_major":'+$v.Major+',"runtime_minor":'+$v.Minor+',"runtime_patch":'+$patch+',"stage":'+$script:DriverStage+',"scenario":"'+$script:DriverScenario+'","expected_exit":'+$script:ExpectedExit+',"native_status":'+$script:NativeStatus+',"failure_code":'+$script:FailureCode+'}'
+    [IO.File]::WriteAllText($Diagnostic,$json)
+}
+function Fail-WrapperCase { param([int]$Code) $script:FailureCode=$Code;throw 'controlled wrapper regression failure' }
+Save-WrapperDiagnostic
+try {
 $keys=@('CARGO_ENCODED_RUSTFLAGS','RUSTFLAGS','CARGO_BUILD_TARGET')
 $runs=0
+$script:DriverStage=2;Save-WrapperDiagnostic
 $inheritedEmpty=[Environment]::GetEnvironmentVariables('Process').Contains($keys[1]) -and [Environment]::GetEnvironmentVariables('Process')[$keys[1]] -eq ''
-if(-not $inheritedEmpty){throw 'native inherited-empty fixture was not established'}
+if(-not $inheritedEmpty){Fail-WrapperCase 2}
 foreach($scenario in @('inherited','missing','mixed','empty','nonempty')){
     foreach($buildExit in @(0,17)){
+        $script:DriverScenario=$scenario;$script:ExpectedExit=$buildExit;$script:DriverStage=3;Save-WrapperDiagnostic
         if($scenario -ne 'inherited'){
             foreach($key in $keys){if(Test-Path -LiteralPath ('Env:'+$key)){Remove-Item -LiteralPath ('Env:'+$key)}}
             if($scenario -eq 'mixed'){
@@ -493,20 +602,28 @@ foreach($scenario in @('inherited','missing','mixed','empty','nonempty')){
         $env:VPN233_SYNTHETIC_CARGO_TARGET=Join-Path $Workspace '.cache/xtask-bootstrap'
         $env:VPN233_SYNTHETIC_CARGO_REPORT=Join-Path $Workspace ('cargo-report-'+$runs+'.json')
         $global:LASTEXITCODE=97
+        $script:NativeStatus=97;$script:DriverStage=4;Save-WrapperDiagnostic
         $caught=$false
         try {
             $path=@(& $Wrapper -PathOnly)
-            if($buildExit -eq 0 -and ($path.Count -ne 1 -or -not (Test-Path -LiteralPath $path[0] -PathType Leaf))){throw 'PathOnly result was incomplete'}
         }catch{$caught=$true}
-        if($caught -ne ($buildExit -ne 0)){throw 'unexpected wrapper build outcome'}
-        if($global:LASTEXITCODE -ne $buildExit){throw 'wrapper lost the native build exit status'}
+        $script:NativeStatus=$global:LASTEXITCODE;$script:DriverStage=5;Save-WrapperDiagnostic
+        if($caught -ne ($buildExit -ne 0)){Fail-WrapperCase 5}
+        if($buildExit -eq 0 -and ($path.Count -ne 1 -or -not (Test-Path -LiteralPath $path[0] -PathType Leaf))){Fail-WrapperCase 12}
+        $script:DriverStage=6;Save-WrapperDiagnostic
+        if($global:LASTEXITCODE -ne $buildExit){Fail-WrapperCase 6}
+        $script:DriverStage=7;Save-WrapperDiagnostic
+        if(-not [IO.File]::Exists($env:VPN233_SYNTHETIC_CARGO_REPORT)){Fail-WrapperCase 7}
         $outcome=[IO.File]::ReadAllText($env:VPN233_SYNTHETIC_CARGO_REPORT)|ConvertFrom-Json
-        if(-not $outcome.arguments_ok -or -not $outcome.flags_absent){throw 'Cargo arguments or child environment were incorrect'}
-        if((Get-Location).Path -ne $location){throw 'wrapper changed caller location'}
+        $script:DriverStage=8;Save-WrapperDiagnostic
+        if(-not $outcome.arguments_ok){Fail-WrapperCase 8}
+        if(-not $outcome.flags_absent){Fail-WrapperCase 13}
+        $script:DriverStage=9;Save-WrapperDiagnostic
+        if((Get-Location).Path -ne $location){Fail-WrapperCase 9}
         $after=[Environment]::GetEnvironmentVariables('Process')
         foreach($key in $keys){
-            if($after.Contains($key) -ne $before.Contains($key)){throw 'environment presence changed'}
-            if($after.Contains($key) -and $after[$key] -cne $before[$key]){throw 'environment value changed'}
+            if($after.Contains($key) -ne $before.Contains($key)){Fail-WrapperCase 10}
+            if($after.Contains($key) -and $after[$key] -cne $before[$key]){Fail-WrapperCase 11}
         }
         $runs++
     }
@@ -514,6 +631,12 @@ foreach($scenario in @('inherited','missing','mixed','empty','nonempty')){
 $bytes=[Text.Encoding]::UTF8.GetBytes((@{runs=$runs;inheritedEmptyPreserved=$true;childFlagsAbsent=$true;callerUnchanged=$true;nativeStatusPreserved=$true}|ConvertTo-Json -Compress))
 $stream=[IO.File]::Open($Report,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
 try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()}
+$script:DriverStage=10;Save-WrapperDiagnostic
+} catch {
+    if($script:FailureCode -eq 0){$script:FailureCode=99}
+    try{Save-WrapperDiagnostic}catch{}
+    exit 1
+}
 "#).unwrap();
         let mut command = Command::new(shell);
         command.env_clear();
@@ -547,8 +670,27 @@ try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()}
             &std::env::var_os("PATH").unwrap_or_default(),
         )))
         .unwrap();
+        let profile = workspace.join("private profile");
+        for (key, directory) in [
+            ("HOME", "home"),
+            ("XDG_CONFIG_HOME", "config"),
+            ("XDG_CACHE_HOME", "cache"),
+            ("XDG_DATA_HOME", "data"),
+            ("XDG_STATE_HOME", "state"),
+            ("XDG_RUNTIME_DIR", "runtime"),
+            ("USERPROFILE", "home"),
+            ("APPDATA", "appdata"),
+            ("LOCALAPPDATA", "local-appdata"),
+        ] {
+            let directory = profile.join(directory);
+            fs::create_dir_all(&directory).unwrap();
+            command.env(key, directory);
+        }
         command
             .env("PATH", path)
+            .env("POWERSHELL_TELEMETRY_OPTOUT", "1")
+            .env("POWERSHELL_UPDATECHECK", "Off")
+            .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
             .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .env("RUSTFLAGS", "")
             .env("CARGO_BUILD_TARGET", "synthetic inherited target")
@@ -566,24 +708,49 @@ try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()}
             .arg(&report)
             .arg("-Workspace")
             .arg(&workspace)
+            .arg("-Diagnostic")
+            .arg(&diagnostic)
             .current_dir(private.path());
         let output = match support::process_output(&mut command, None, Duration::from_secs(60)) {
             Ok(output) => output,
-            Err(_) => panic!(
-                "PowerShell environment regression could not complete; private details withheld"
-            ),
+            Err(error) => {
+                report_wrapper_failure(
+                    index,
+                    &diagnostic,
+                    support::process_failure_kind(&error),
+                    -1,
+                );
+                panic!("PowerShell environment regression could not complete; private details withheld")
+            }
         };
-        assert!(
-            output.status.success(),
-            "PowerShell environment isolation regression failed; private output withheld"
-        );
-        let result: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
-        assert!(
+        if !output.status.success() {
+            report_wrapper_failure(
+                index,
+                &diagnostic,
+                "driver-nonzero",
+                output.status.code().unwrap_or(-1),
+            );
+            panic!("PowerShell environment isolation regression failed; private output withheld");
+        }
+        let result = fs::read(&report)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+        if !result.as_ref().is_some_and(|result| {
             result["runs"] == 10
                 && result["inheritedEmptyPreserved"] == true
                 && result["childFlagsAbsent"] == true
                 && result["callerUnchanged"] == true
                 && result["nativeStatusPreserved"] == true
-        );
+        }) {
+            report_wrapper_failure(
+                index,
+                &diagnostic,
+                "report-incomplete",
+                output.status.code().unwrap_or(-1),
+            );
+            panic!(
+                "PowerShell environment regression report was incomplete; private details withheld"
+            );
+        }
     }
 }
