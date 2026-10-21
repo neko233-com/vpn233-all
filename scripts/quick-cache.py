@@ -209,8 +209,13 @@ def fingerprints(root: Path, flavor: str, engine: str, *, evidence: dict | None 
     with ThreadPoolExecutor(max_workers=2) as executor:
         dependencies = executor.submit(tree_digest, root / "admin-web/node_modules")
         output = executor.submit(tree_digest, root / "admin-web/dist")
+        # Collect native tool evidence once; the second source pass only reads
+        # candidate/index/history/config/environment inputs after workers finish.
+        evidence = tool_evidence(root, flavor, engine) if evidence is None else evidence
         source = source_fingerprint(root, flavor, engine, evidence=evidence, environment=environment)
         result = {"source": source, "dependencies": dependencies.result(), "output": output.result(), "dependencies_were_ready": dependency_marker_valid(root)}
+        if source != source_fingerprint(root, flavor, engine, evidence=evidence, environment=environment):
+            raise CacheUnavailable("source-changed-during-fingerprint")
     result["fingerprint"] = digest(canonical({key: result[key] for key in ("source", "dependencies", "output")}))
     return result
 

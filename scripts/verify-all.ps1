@@ -175,12 +175,26 @@ try {
             finally { $env:VPN233_UI_BINARY = $previousUIBinary }
         }
         Invoke-Step 'real Windows release packaging/checksums/privacy/docs links' {
-            $previousTarget = $env:TARGET_DIR
-            try {
-                $env:TARGET_DIR = $releaseDir.Replace('\', '/')
-                Invoke-Native (Get-Bash) @('-c', 'PLATFORM=windows-x86_64 TARGET=x86_64-pc-windows-msvc EXE_SUFFIX=.exe VERSION="$(tr -d ''\r\n'' < version.txt)" BUNDLE_ROOT=target/verify-package bash .github/scripts/assemble-bundle.sh')
+            $bundleEnvironment = @{
+                PLATFORM = 'windows-x86_64'; TARGET = 'x86_64-pc-windows-msvc'; EXE_SUFFIX = '.exe'
+                VERSION = (Get-Content -LiteralPath 'version.txt' -Raw).Trim()
+                TARGET_DIR = $releaseDir.Replace('\', '/'); BUNDLE_ROOT = 'target/verify-package'
             }
-            finally { $env:TARGET_DIR = $previousTarget }
+            $previousBundleEnvironment = @{}
+            foreach ($name in $bundleEnvironment.Keys) {
+                $previousBundleEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            }
+            try {
+                foreach ($name in $bundleEnvironment.Keys) {
+                    [Environment]::SetEnvironmentVariable($name, $bundleEnvironment[$name], 'Process')
+                }
+                Invoke-Native (Get-Bash) @('.github/scripts/assemble-bundle.sh')
+            }
+            finally {
+                foreach ($name in $previousBundleEnvironment.Keys) {
+                    [Environment]::SetEnvironmentVariable($name, $previousBundleEnvironment[$name], 'Process')
+                }
+            }
         }
     }
     if ($cacheTicket -and -not $script:Failures) {

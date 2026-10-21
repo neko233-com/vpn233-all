@@ -7,7 +7,9 @@ import stat
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("quick_cache", Path(__file__).resolve().parents[1] / "quick-cache.py")
 cache = importlib.util.module_from_spec(SPEC)
@@ -167,6 +169,35 @@ class QuickCacheTests(unittest.TestCase):
             first = self.probe()
             self.write(name, "// changed during verification")
             self.assertFalse(self.finish(first["ticket"])["stored"])
+
+    def test_change_during_parallel_dependency_scan_rejects_probe_and_store(self):
+        original_source = cache.source_fingerprint
+        original_tree = cache.tree_digest
+        for action in ("probe", "store"):
+            with self.subTest(action=action):
+                self.seed()
+                ticket = ""
+                if action == "store":
+                    self.write("source.rs", "// new verification input")
+                    ticket = self.probe()["ticket"]
+                source_ready = threading.Event()
+
+                def read_source(*arguments, **keywords):
+                    result = original_source(*arguments, **keywords)
+                    source_ready.set()
+                    return result
+
+                def read_tree(path):
+                    if path.name == "node_modules":
+                        if not source_ready.wait(timeout=5):
+                            raise AssertionError("source scan did not complete")
+                        self.write("source.rs", "// changed during parallel " + action)
+                    return original_tree(path)
+
+                with patch.object(cache, "source_fingerprint", side_effect=read_source), patch.object(cache, "tree_digest", side_effect=read_tree):
+                    with self.assertRaises(cache.CacheUnavailable):
+                        self.probe() if action == "probe" else self.finish(ticket)
+                self.assertFalse(self.report().exists())
 
     def test_first_install_requires_another_stable_verification(self):
         (self.root / "admin-web/node_modules/.vpn233-lock.sha256").unlink()
