@@ -294,7 +294,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             platform: Linux
             bundle: linux-x86_64
             target: x86_64-unknown-linux-gnu
@@ -364,7 +364,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           npm ci --prefix admin-web --prefer-offline --no-audit
-          npx --prefix admin-web playwright install --with-deps chromium
+          npx --prefix admin-web playwright install chromium
           npm run test:ui --prefix admin-web
       - name: Windows E2E (PowerShell 5.1)
         if: runner.os == 'Windows'

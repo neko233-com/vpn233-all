@@ -90,7 +90,7 @@ jobs:
     name: Build and verify changed documentation
     needs: gate
     if: needs.gate.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -133,7 +133,7 @@ jobs:
       - name: Verify local pages, links, anchors and zero external requests
         run: |
           npm ci --prefix admin-web --prefer-offline --no-audit
-          npx --prefix admin-web playwright install --with-deps chromium
+          npx --prefix admin-web playwright install chromium
           node --test admin-web/scripts/docs-site-check.test.mjs
           node admin-web/scripts/docs-site-check.mjs --root _site --baseurl "/${GITHUB_REPOSITORY#*/}"
       - name: Upload fully checked Pages artifact

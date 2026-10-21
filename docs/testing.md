@@ -67,6 +67,8 @@ Rust 回环 HTTP 夹具直接绑定内核分配的端口并通过私有就绪文
 
 浏览器回归使用 Playwright 驱动真实后台和本地订阅服务，覆盖登录失败/成功、会话存储、结构化节点显示、不同节点独立选择与取消保存、订阅链接与二维码、刷新、移动导航和退出；不替代每种客户端或公网代理协议的互通验证。
 
+CI 的 Linux E2E 与 Pages 构建固定使用 GitHub 托管的 Ubuntu 24.04，复用镜像为预装 Chrome / Chromium 提供的系统库。锁文件中的 Playwright 仍下载其指定的 Chromium，浏览器准备不执行 APT 源刷新。下载成功本身不证明依赖库齐全；后续必须实际启动该 Chromium，完成 UI 或 Pages 链接、锚点和零外联检查，缺库、启动错误及检查失败均保留非零退出状态。
+
 官方解析验收可单独运行，下列导出目录需尚未存在同名配置文件，示例使用被 Git 忽略的 `target/`。首次 `--download-core` 只下载并校验公开官方二进制，后续复用缓存且重新校验；也可提供受信本地 `--mihomo-bin` 或官方归档 `--mihomo-archive`。
 
 ```bash
@@ -92,4 +94,4 @@ Pages 使用 `docs/_config.yml` 中的 `jekyll-relative-links`，在构建时把
 
 macOS 两种架构分别使用 [GitHub 官方原生运行器](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)，发布工作流要求二进制架构、三个程序版本检查和真实回环 E2E 全部通过。
 
-Linux 发布程序使用 Ubuntu 22.04 / glibc 2.35 编译基线，保持当前 Rust 工具链，并在最新 Ubuntu 上执行 E2E，兼顾依赖更新与发行版兼容。
+Linux 发布程序使用 Ubuntu 22.04 / glibc 2.35 编译基线，保持当前 Rust 工具链，并在固定的 Ubuntu 24.04 上执行 E2E，兼顾依赖更新与发行版兼容。
