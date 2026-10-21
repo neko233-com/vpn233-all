@@ -114,6 +114,8 @@ def tool_evidence(root: Path, flavor: str, engine: str) -> dict:
     }
     if flavor == "powershell":
         commands["powershell-fixtures"] = ["powershell", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]
+    if sys.platform.startswith("linux"):
+        commands["systemd-analyze"] = ["systemd-analyze", "--version"]
 
     def collect(item: tuple[str, list[str]]) -> tuple[str, dict]:
         name, command = item

@@ -738,6 +738,57 @@ async fn generated_sh_writable_node_root_does_not_invoke_available_sudo() {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn generated_node_unit_passes_systemd_parser_with_literal_paths() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parser = Command::new("systemd-analyze").arg("--version").output();
+    if !parser.is_ok_and(|output| output.status.success()) {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "Linux CI requires systemd-analyze"
+        );
+        eprintln!("skipping native systemd parser: systemd-analyze unavailable");
+        return;
+    }
+    let bash = find_bash().expect("bash is required for the native systemd regression");
+    let (app, _state) = test_app().await;
+    let token = login_token(&app).await;
+    let (_, script) = call(&app, "GET", "/api/v1/generate.sh", Some(&token)).await;
+    let definitions = script.trim_end().strip_suffix("main \"$@\"").unwrap();
+    let render = format!("{definitions}\nrender_unit\n");
+    let temporary = TempDir::new().unwrap();
+    let root = temporary.path().join("node with spaces %n $LITERAL");
+    let executable = root.join("bin/mihomo");
+    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(root.join("mihomo")).unwrap();
+    std::fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let output = run_bash_script(
+        &bash,
+        &render,
+        &[("VPN233_NODE_ROOT", root.to_str().unwrap().to_owned())],
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "generated node unit rendering failed"
+    );
+    let unit = temporary.path().join("vpn233-node.service");
+    std::fs::write(&unit, output.stdout).unwrap();
+    let verification = Command::new("systemd-analyze")
+        .args(["verify", "--man=no"])
+        .arg(unit)
+        .output()
+        .unwrap();
+    assert!(
+        verification.status.success(),
+        "native systemd parser rejected the synthetic unit: {}",
+        String::from_utf8_lossy(&verification.stderr)
+    );
+}
+
 #[tokio::test]
 async fn generated_sh_dry_run_does_not_touch_the_filesystem() {
     let Some(bash) = find_bash() else {

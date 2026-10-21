@@ -1074,7 +1074,10 @@ write_systemd_unit() {
     printf '\n'
     printf '[Service]\n'
     printf 'Type=simple\n'
-    printf 'WorkingDirectory=%s\n' "$(vpn233_unit_quote "$BASE_DIR")"
+    # This setting is a single path, not an ExecStart argument list: systemd
+    # retains enclosing quotes and rejects the resulting non-absolute path.
+    # The trailing /. also preserves a literal trailing space or backslash.
+    printf 'WorkingDirectory=%s/.\n' "${BASE_DIR//\%/%%}"
     printf 'ExecStart=%s --config %s\n' "$(vpn233_unit_quote "$BIN_DIR/$binary$BIN_EXT")" "$(vpn233_unit_quote "$CONFIG_DIR/$config")"
     printf 'Restart=on-failure\n'
     printf 'RestartSec=3\n'
@@ -1140,7 +1143,7 @@ install_systemd_services() {
     fi
     unit_dir="/etc/systemd/system"
   else
-    unit_dir="${HOME}/.config/systemd/user"
+    unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   fi
   for service in $(service_unit_names); do
     write_systemd_unit "$unit_dir" "$scope" "$service"

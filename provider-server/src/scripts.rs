@@ -651,7 +651,20 @@ install_config() {
   as_node_owner chmod 600 "$CONFIG_FILE" || warn 'cannot tighten config permissions'
 }
 
+systemd_literal() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//%/%%}"
+  printf '"%s"' "$value"
+}
+
 render_unit() {
+  # ':' disables environment expansion, keeping user paths literal. Quotes
+  # preserve spaces; %% protects systemd specifiers in either path.
+  local executable directory
+  executable="$(systemd_literal ":$MIHOMO_BIN")"
+  directory="$(systemd_literal "$CONFIG_DIR")"
   cat <<VPN233_UNIT
 [Unit]
 Description=vpn233 node (Mihomo)
@@ -660,7 +673,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$MIHOMO_BIN -d $CONFIG_DIR
+ExecStart=$executable -d $directory
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535
@@ -679,7 +692,7 @@ install_service() {
     warn 'systemctl is unavailable: service setup skipped, start mihomo manually'
     return 0
   fi
-  if [ ! -x "$MIHOMO_BIN" ]; then
+  if ! as_node_owner test -x "$MIHOMO_BIN"; then
     warn "mihomo binary is missing at $MIHOMO_BIN: service setup skipped"
     return 0
   fi

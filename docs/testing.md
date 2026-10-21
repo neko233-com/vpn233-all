@@ -27,7 +27,7 @@ Quick 使用 Cargo 自身管理的锁定 crates 缓存，不逐次重扫用户�
 
 首次安装或更换前端依赖的 Quick 需要下一次依赖稳定的真实检查成功后才保存报告。设置自定义脚本启动文件、Node 启动选项或 Rust 编译包装器时保守禁用结果缓存。
 
-完整验证需仓库锁定版本的 Rust、Node.js 24、Python 3、Git、Bash、ShellCheck、actionlint、gitleaks、cargo-audit、PowerShell/PSScriptAnalyzer 和 OpenSSL，缺少工具真实失败。官方 Mihomo 解析门禁首次联网下载固定版本的公开内核归档，之后复用本地缓存，每次重新核对固定 SHA-256；下载或校验失败不会静默跳过。
+完整验证需仓库锁定版本的 Rust、Node.js 24、Python 3、Git、Bash、ShellCheck、actionlint、gitleaks、cargo-audit、PowerShell/PSScriptAnalyzer 和 OpenSSL，Linux 还需提供 `systemd-analyze` 的 systemd 工具包，缺少工具真实失败。安装器测试把用户服务目录隔离在临时 `XDG_CONFIG_HOME`，以受控管理器验证首装、重装归属与失败回滚，并在 Linux 使用真实 systemd 解析器验收生成单元。官方 Mihomo 解析门禁首次联网下载固定版本的公开内核归档，之后复用本地缓存，每次重新核对固定 SHA-256；下载或校验失败不会静默跳过。
 
 | 层次 | 覆盖 |
 | --- | --- |
@@ -59,3 +59,5 @@ GitHub Pages 使用 `docs/_config.yml` 中的 `jekyll-relative-links`，在构�
 `vMAJOR.MINOR.PATCH` 标签触发可复用 CI 验证，再构建 Linux x86_64、Windows x86_64、macOS x86_64 / arm64。每包只含三个二进制、前端、公开模板、脚本与文档。发布前验证 SHA256SUMS、内容和隐私；发布后再次核对下载。不得在 CI、完整验证、E2E、校验和、前端未全绿时发布。
 
 macOS 两种架构分别使用 [GitHub 官方原生运行器](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)，发布工作流要求二进制架构、三个程序版本检查和真实回环 E2E 全部通过。
+
+Linux 发布程序使用 Ubuntu 22.04 / glibc 2.35 编译基线，保持当前 Rust 工具链，并在最新 Ubuntu 上执行 E2E，兼顾依赖更新与发行版兼容。

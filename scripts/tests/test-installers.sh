@@ -5,6 +5,33 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/vpn233-install-test.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 umask 077
+# A real user manager may be available in CI. Keep every unit and manager call
+# inside the fixture, while exercising the same Linux ownership/reinstall path.
+HOST_OS="$(uname -s)"
+export XDG_CONFIG_HOME="$WORK/isolated service configuration"
+VPN233_TEST_UNAME="$(command -v uname)"
+export VPN233_TEST_UNAME
+export VPN233_TEST_SYSTEMCTL_LOG="$WORK/systemctl.calls"
+mkdir -p "$WORK/mocks"
+cat > "$WORK/mocks/uname" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -s ]]; then printf 'Linux\n'; else "$VPN233_TEST_UNAME" "$@"; fi
+MOCK
+cat > "$WORK/mocks/systemctl" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\n' "$*" >> "$VPN233_TEST_SYSTEMCTL_LOG"
+case "$*" in
+  '--user show-environment'|'--user daemon-reload'|'--user enable vpn233-provider.service vpn233-subscribe.service vpn233-client.service') exit 0 ;;
+  '--user stop vpn233-provider.service'|'--user stop vpn233-subscribe.service'|'--user stop vpn233-client.service')
+    [[ -f "$XDG_CONFIG_HOME/systemd/user/${3}" ]] ;;
+  '--user enable --now vpn233-provider.service vpn233-subscribe.service vpn233-client.service')
+    [[ "${VPN233_TEST_FAIL_ACTIVATION:-0}" != 1 ]] ;;
+  *) printf 'unexpected fixture systemctl command\n' >&2; exit 97 ;;
+esac
+MOCK
+chmod +x "$WORK/mocks/uname" "$WORK/mocks/systemctl"
+export PATH="$WORK/mocks:$PATH"
 unset VPN233_BIN_DIR VPN233_WEB_DIR VPN233_CONFIG_DIR VPN233_DATA_DIR VPN233_ADMIN_USER VPN233_ADMIN_PASSWORD
 unset VPN233_PROVIDER_FEED_TOKEN VPN233_REGISTRY_TOKEN VPN233_ALLOW_UNSIGNED VPN233_BUNDLE_SHA256
 unset VPN233_PROVIDER_PORT VPN233_SUBSCRIBE_PORT VPN233_CLIENT_SOCKS_PORT VPN233_CLIENT_HTTP_PORT VPN233_CLIENT_WEB_PORT
@@ -17,7 +44,7 @@ reject() {
   ok "$label"
 }
 FIXTURE="$WORK/fixture"
-PREFIX="$WORK/install with spaces"
+PREFIX="$WORK/install with spaces %n"
 mkdir -p "$FIXTURE/bin" "$FIXTURE/examples" "$FIXTURE/admin-web/dist"
 for name in vpn233-provider-server vpn233-subscribe-server vpn233-client; do
   printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/bin/$name"
@@ -56,20 +83,34 @@ ok 'all binaries installed'
 grep -F -q "listen_addr: '127.0.0.1'" "$PREFIX/config/provider-server.yaml"; ok 'provider local binding'
 grep -F -q "host: '127.0.0.1'" "$PREFIX/config/subscribe-server.yaml"; ok 'subscribe local binding'
 grep -F -q "admin_password: 'synthetic''quoted\"password\\with&dollar\$'" "$PREFIX/config/provider-server.yaml"; ok 'YAML password characters preserved'
+for name in provider subscribe client; do [[ -f "$XDG_CONFIG_HOME/systemd/user/vpn233-$name.service" ]]; done
+[[ "$(grep -c -F -- '--user enable ' "$VPN233_TEST_SYSTEMCTL_LOG")" -eq 1 ]]
+if grep -E -q -- '(^| )(start|stop|--now)( |$)' "$VPN233_TEST_SYSTEMCTL_LOG"; then exit 1; fi
+ok 'first no-start install registers isolated XDG user units without activation'
+if [[ "$HOST_OS" == Linux* ]]; then
+  command -v systemd-analyze >/dev/null || { printf 'Linux installer tests require systemd-analyze\n' >&2; exit 1; }
+  systemd-analyze verify "$XDG_CONFIG_HOME/systemd/user/"*.service > "$WORK/parser-output" 2>&1 || { cat "$WORK/parser-output" >&2; exit 1; }
+  ok 'native systemd parser accepts generated units with spaces and literal specifier'
+  sed "s|^WorkingDirectory=.*|WorkingDirectory=\"$PREFIX\"|" "$XDG_CONFIG_HOME/systemd/user/vpn233-provider.service" > "$WORK/quoted-working-directory.service"
+  reject 'native parser rejects quoted WorkingDirectory regression' systemd-analyze verify "$WORK/quoted-working-directory.service"
+else
+  printf '[SKIP] native systemd parser requires a Linux host\n'
+fi
 BEFORE="$(vpn233_sha256_file "$PREFIX/config/provider-server.yaml")"
 printf 'synthetic retained data\n' > "$PREFIX/data/retained.txt"
 export VPN233_ADMIN_PASSWORD=replacement-must-not-overwrite
-bash "$ROOT/install.sh" "${ARGS[@]}" --sha256 "$HASH" > "$WORK/output" 2>&1
+bash "$ROOT/install.sh" "${ARGS[@]}" --sha256 "$HASH" > "$WORK/output" 2>&1 || { cat "$WORK/output" >&2; exit 1; }
+for name in provider subscribe client; do grep -F -x -q -- "--user stop vpn233-$name.service" "$VPN233_TEST_SYSTEMCTL_LOG"; done
+ok 'reinstall stops each owned XDG unit before replacing payload'
 [[ "$(vpn233_sha256_file "$PREFIX/config/provider-server.yaml")" == "$BEFORE" ]]; ok 'reinstall preserves configuration bytes'
 [[ "$(cat "$PREFIX/data/retained.txt")" == 'synthetic retained data' ]]; ok 'reinstall preserves runtime data'
 reject 'bad update rejected' bash "$ROOT/install.sh" "${ARGS[@]}" --sha256 "$(printf '%064d' 0)"
 [[ "$(vpn233_sha256_file "$PREFIX/config/provider-server.yaml")" == "$BEFORE" ]]; ok 'bad update preserves prior configuration'
 printf 'previous payload must return after failure\n' > "$PREFIX/bin/vpn233-provider-server"
 printf 'previous web must return after failure\n' > "$PREFIX/admin-web/dist/index.html"
-mkdir -p "$WORK/mocks"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$WORK/mocks/systemctl"
-chmod +x "$WORK/mocks/systemctl"
-reject 'failed activation returns nonzero' env PATH="$WORK/mocks:$PATH" bash "$ROOT/install.sh" --bundle "$WORK/fixture.tar.gz" --prefix "$PREFIX" --sha256 "$HASH"
+reject 'failed activation returns nonzero' env VPN233_TEST_FAIL_ACTIVATION=1 bash "$ROOT/install.sh" --bundle "$WORK/fixture.tar.gz" --prefix "$PREFIX" --sha256 "$HASH"
+grep -F -x -q -- '--user enable --now vpn233-provider.service vpn233-subscribe.service vpn233-client.service' "$VPN233_TEST_SYSTEMCTL_LOG"
+ok 'activation failure occurs after stopping owned units and writing replacements'
 [[ "$(cat "$PREFIX/bin/vpn233-provider-server")" == 'previous payload must return after failure' ]]; ok 'failed activation rolls binaries back'
 [[ "$(cat "$PREFIX/admin-web/dist/index.html")" == 'previous web must return after failure' ]]; ok 'failed activation rolls admin UI back'
 [[ "$(vpn233_sha256_file "$PREFIX/config/provider-server.yaml")" == "$BEFORE" && "$(cat "$PREFIX/data/retained.txt")" == 'synthetic retained data' ]]; ok 'failed activation preserves configuration and runtime data'

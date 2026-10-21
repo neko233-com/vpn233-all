@@ -20,12 +20,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             platform: Linux
             extension: ""
+            cache: ci-Linux-glibc235
           - os: windows-latest
             platform: Windows
             extension: .exe
+            cache: ci-Windows
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
@@ -38,7 +40,7 @@ jobs:
         run: python scripts/build-environment.py --github
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: ci-${{ matrix.platform }}
+          key: ${{ matrix.cache }}
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
