@@ -93,7 +93,7 @@ if [ "$skip_scripts" -eq 0 ]; then
 fi
 if [ "$skip_docs" -eq 0 ]; then step bash scripts/e2e/check-docs.sh; fi
 if [ "$quick" -eq 0 ] && [ "$skip_audit" -eq 0 ]; then
-  step cargo audit
+  step cargo audit --deny warnings
   step npm audit --prefix admin-web --audit-level=high
 fi
 if [ "$quick" -eq 0 ] && [ "$skip_e2e" -eq 0 ]; then

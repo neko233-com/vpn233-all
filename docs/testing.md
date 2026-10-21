@@ -39,6 +39,8 @@ Quick 使用 Cargo 自身管理的锁定 crates 缓存，不逐次重扫用户�
 
 完整验证需仓库锁定版本的 Rust、Node.js 24、Git、Bash、ShellCheck、actionlint、gitleaks、cargo-audit、PowerShell/PSScriptAnalyzer 和 OpenSSL，Linux 还需提供 `systemd-analyze` 的 systemd 工具包，缺少工具真实失败。安装器测试把用户服务目录隔离在临时 `XDG_CONFIG_HOME`，以受控管理器验证首装、重装归属与失败回滚，并在 Linux 使用真实 systemd 解析器验收生成单元。官方 Mihomo 解析门禁首次联网下载固定版本的公开内核归档，之后复用本地缓存，每次重新核对固定 SHA-256；下载或校验失败不会静默跳过。
 
+完整验证和 CI 使用 `cargo audit --deny warnings`，漏洞或任意 RustSec 警告都会使审计失败，包括已撤回版本（yanked）、不健全实现（unsound）和停止维护（unmaintained）。Quick 跳过联网依赖审计，不能作为发布凭证。
+
 | 层次 | 覆盖 |
 | --- | --- |
 | Rust | 协议字段、URI/Base64/结构化导入、格式筛选、认证、令牌、配额、注册 |

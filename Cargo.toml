@@ -10,7 +10,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "2.1.1"
+version = "2.1.2"
 license = "MIT"
 rust-version = "1.96"
 
@@ -34,7 +34,7 @@ serde_yaml = { package = "yaml_serde", version = "0.10.7" }
 sha2 = "0.10"
 subtle = "2"
 tempfile = "3"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.54.1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "fs", "set-header", "trace"] }
 tracing = "0.1"

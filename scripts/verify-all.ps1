@@ -149,7 +149,7 @@ try {
     }
     if (-not $SkipDocs) { Invoke-Step 'documentation contract' { Invoke-Native (Get-Bash) @('scripts/e2e/check-docs.sh') } }
     if (-not $Quick -and -not $SkipAudit) {
-        Invoke-Step 'RustSec dependency audit' { Invoke-Native cargo @('audit') }
+        Invoke-Step 'RustSec dependency audit' { Invoke-Native cargo @('audit', '--deny', 'warnings') }
         Invoke-Step 'npm dependency audit (high+)' { Invoke-Native npm @('audit', '--prefix', 'admin-web', '--audit-level=high') }
     }
     if (-not $Quick -and -not $SkipE2E) {
