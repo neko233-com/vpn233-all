@@ -2015,6 +2015,74 @@ async fn structured_and_base64_inline_payloads_are_parsed_and_deduplicated() {
 }
 
 #[tokio::test]
+async fn structured_inventory_payloads_can_be_selected_and_removed_independently() {
+    let payload = "proxies:\n- name: WG synthetic\n  type: wireguard\n  private-key: change-me\n  peers:\n  - {server: example.invalid, port: 51820, public-key: change-me, allowed-ips: [0.0.0.0/0]}\n- {name: Mieru synthetic, type: mieru, server: example.invalid, port-range: 2090-2099, transport: TCP, username: change-me, password: change-me}";
+    let server = TestServer::with_links(&[payload.into()]).await;
+    let admin = server.admin_token().await;
+    let (status, _, body) = server.admin_get("/api/nodes", &admin).await;
+    assert_eq!(status, StatusCode::OK);
+    let nodes = json_body(&body);
+    let nodes = nodes.as_array().unwrap();
+    assert_eq!(nodes.len(), 2);
+    assert_eq!(nodes[0]["endpoint"], "example.invalid:51820");
+    assert_eq!(nodes[1]["endpoint"], "example.invalid:2090-2099");
+    let selections: Vec<&str> = nodes
+        .iter()
+        .map(|node| node["payload"].as_str().unwrap())
+        .collect();
+    assert_ne!(selections[0], selections[1]);
+    for selection in &selections {
+        assert!(!selection.contains('\n'));
+        let (parsed, errors) = vpn233_core_lib_rust::parse_subscription(selection);
+        assert!(errors.is_empty());
+        assert_eq!(parsed.len(), 1);
+    }
+    let (status, _, body) = server.admin_post("/api/admin/groups", &admin, &json!({
+        "group_id": "structured-inline", "name": "Structured inline", "node_links": [payload],
+    })).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(json_body(&body)["group"]["node_count"], 2);
+    let (status, _, body) = server
+        .admin_post(
+            "/api/admin/groups",
+            &admin,
+            &json!({
+                "group_id": "structured-group", "name": "Structured", "node_links": selections,
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(json_body(&body)["group"]["node_count"], 2);
+    server
+        .create_account_link_with_group(&admin, "structured-group-token", "pw", "structured-group")
+        .await;
+    let (status, headers, body) = server
+        .get_basic("/sub/mihomo", "structured-group-token", "pw")
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(header_value(&headers, "x-vpn233-rendered"), "2");
+    let yaml: serde_yaml::Value = serde_yaml::from_slice(&body).unwrap();
+    assert_eq!(yaml["proxies"][0]["peers"][0]["port"], 51820);
+    assert_eq!(yaml["proxies"][1]["port-range"], "2090-2099");
+    let (status, _, _) = server
+        .admin_patch(
+            "/api/admin/groups/structured-group",
+            &admin,
+            &json!({
+                "node_links": [selections[1]],
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, headers, body) = server
+        .get_basic("/sub/mihomo", "structured-group-token", "pw")
+        .await;
+    assert_eq!(header_value(&headers, "x-vpn233-rendered"), "1");
+    let yaml: serde_yaml::Value = serde_yaml::from_slice(&body).unwrap();
+    assert_eq!(yaml["proxies"][0]["type"], "mieru");
+}
+
+#[tokio::test]
 async fn corrupted_persisted_stores_fail_closed_without_overwriting_data() {
     for filename in [
         "usage.json",

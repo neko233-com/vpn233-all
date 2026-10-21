@@ -45,6 +45,16 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked --workspace
+      - name: Export synthetic protocol, import and transport fixtures once
+        if: runner.os == 'Linux'
+        run: cargo run --locked --quiet -p vpn233-core-lib-rust --example mihomo_fixtures -- target/mihomo-fixtures
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Linux'
+        with:
+          name: verified-mihomo-fixtures
+          path: target/mihomo-fixtures/*.yaml
+          if-no-files-found: error
+          retention-days: 1
       - name: Build release binaries once
         run: cargo build --locked --release --workspace
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -241,6 +251,21 @@ jobs:
         run: |
           chmod +x target/release/vpn233-*
           bash scripts/e2e/e2e.sh
+      - name: Cache checksum-verified official Mihomo archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/tools/mihomo
+          key: mihomo-parser-${{ runner.os }}-${{ hashFiles('provider-server/src/config.rs', 'provider-server/src/scripts.rs') }}
+      - name: Restore synthetic core fixtures
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: verified-mihomo-fixtures
+          path: target/mihomo-fixtures
+      - name: Validate all generated inbounds with the official Mihomo parser
+        shell: bash
+        env:
+          PROVIDER_BINARY: target/release/vpn233-provider-server${{ matrix.extension }}
+        run: python scripts/e2e/check_mihomo_parser.py --provider-bin "$PROVIDER_BINARY" --core-fixtures-dir target/mihomo-fixtures --cache-dir .cache/tools/mihomo --download-core
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: runner.os == 'Linux'
         with:

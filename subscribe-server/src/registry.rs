@@ -224,7 +224,13 @@ pub(crate) fn normalize_links(links: Vec<String>) -> Vec<String> {
     links
         .into_iter()
         .map(|link| link.trim().to_owned())
-        .filter(|link| link.contains("://") && link.len() <= 8192)
+        .filter(|link| {
+            if link.len() > 8192 {
+                return false;
+            }
+            let (nodes, errors) = vpn233_core_lib_rust::parse_subscription(link);
+            !nodes.is_empty() && errors.is_empty()
+        })
         .take(256)
         .collect()
 }

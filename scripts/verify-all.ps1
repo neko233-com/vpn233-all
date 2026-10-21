@@ -3,6 +3,7 @@
 [CmdletBinding()]
 param(
     [switch]$Quick,
+    [switch]$NoQuickCache,
     [switch]$SkipRust,
     [switch]$SkipWeb,
     [switch]$SkipScripts,
@@ -16,6 +17,10 @@ $RootDir = Split-Path -Parent $PSScriptRoot
 $script:Failures = 0
 $script:Checks = 0
 $watch = [Diagnostics.Stopwatch]::StartNew()
+$cacheTicket = ''
+$cacheFinished = $false
+$cacheEligible = $Quick -and -not ($NoQuickCache -or $SkipRust -or $SkipWeb -or $SkipScripts -or $SkipDocs -or $SkipE2E -or $SkipAudit)
+$cacheEngine = (Get-Process -Id $PID).Path
 
 function Invoke-Native {
     param([string]$Tool, [string[]]$Arguments = @())
@@ -46,9 +51,21 @@ function Get-Candidates {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate Git candidates' }
     return @($paths | Sort-Object -Unique | Where-Object { $_ -notlike 'legacy/*' -and $_.EndsWith($Extension) -and (Test-Path -LiteralPath $_) })
 }
+function Invoke-QuickCache {
+    param([string[]]$Arguments)
+    try {
+        $output = & python scripts/quick-cache.py @Arguments --flavor powershell --engine $cacheEngine 2>$null
+        if ($LASTEXITCODE -eq 0) { return ($output | ConvertFrom-Json) }
+    }
+    catch { Write-Verbose 'Quick cache unavailable; real checks required' }
+    return $null
+}
 
 Push-Location $RootDir
 try {
+    $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $RootDir 'target' }
+    if (-not [IO.Path]::IsPathRooted($targetDir)) { $targetDir = Join-Path $RootDir $targetDir }
+    $releaseDir = [IO.Path]::GetFullPath((Join-Path $targetDir 'release'))
     $env:CARGO_ENCODED_RUSTFLAGS = python scripts/build-environment.py
     if ($LASTEXITCODE -ne 0) { throw 'Cannot configure reproducible Rust build environment' }
     Invoke-Step 'version chain and candidate/index privacy' {
@@ -59,6 +76,23 @@ try {
     if (-not $Quick) {
         Invoke-Step 'full Git history privacy (redacted)' { Invoke-Native python @('scripts/check-privacy.py', '--history') }
         Invoke-Step 'gitleaks full Git history (redacted)' { Invoke-Native gitleaks @('git', '--config', '.gitleaks.toml', '--redact', '--no-banner', '--exit-code', '1') }
+    }
+    else {
+        Invoke-Step 'current full Git history privacy (redacted)' { Invoke-Native python @('scripts/check-privacy.py', '--history-only') }
+    }
+    if ($cacheEligible -and -not $script:Failures) {
+        $cached = Invoke-QuickCache @('probe')
+        if ($cached) {
+            Write-Host $cached.message
+            if ($cached.hit) {
+                $watch.Stop()
+                Write-Host ('QUICK CACHED (not release validation): live gates passed in ' + [math]::Round($watch.Elapsed.TotalSeconds, 2) + 's')
+                $cacheFinished = $true
+                exit 0
+            }
+            $cacheTicket = $cached.ticket
+        }
+        else { Write-Host 'Quick cache unavailable; real checks required' }
     }
     if (-not $SkipRust) {
         Invoke-Step 'Rust format' { Invoke-Native cargo @('fmt', '--all', '--', '--check') }
@@ -117,21 +151,55 @@ try {
         Invoke-Step 'npm dependency audit (high+)' { Invoke-Native npm @('audit', '--prefix', 'admin-web', '--audit-level=high') }
     }
     if (-not $Quick -and -not $SkipE2E) {
-        Invoke-Step 'Windows E2E (real processes, loopback)' { Invoke-Native powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/e2e/e2e.ps1') }
+        Invoke-Step 'official Mihomo parser: generated inbounds and core fixtures' {
+            $fixtureDir = Join-Path ([IO.Path]::GetTempPath()) ('vpn233-core-fixtures-' + [guid]::NewGuid().ToString('N'))
+            try {
+                Invoke-Native cargo @('run', '--locked', '--quiet', '-p', 'vpn233-core-lib-rust', '--example', 'mihomo_fixtures', '--', $fixtureDir)
+                Invoke-Native python @('scripts/e2e/check_mihomo_parser.py', '--download-core', '--cache-dir', '.cache/tools/mihomo', '--provider-bin', (Join-Path $releaseDir 'vpn233-provider-server.exe'), '--core-fixtures-dir', $fixtureDir)
+            }
+            finally {
+                $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+                $resolvedFixture = [IO.Path]::GetFullPath($fixtureDir)
+                if (-not $resolvedFixture.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe fixture cleanup path' }
+                if (Test-Path -LiteralPath $resolvedFixture) { Remove-Item -LiteralPath $resolvedFixture -Recurse -Force }
+            }
+        }
+        Invoke-Step 'Windows E2E (real processes, loopback)' { Invoke-Native powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/e2e/e2e.ps1', '-BinDir', $releaseDir) }
         Invoke-Step 'real browser UI, sessions, mobile and zero external requests' {
             Invoke-Native npx @('--prefix', 'admin-web', 'playwright', 'install', 'chromium')
-            Invoke-Native npm @('run', 'test:ui', '--prefix', 'admin-web')
+            $previousUIBinary = $env:VPN233_UI_BINARY
+            try {
+                $env:VPN233_UI_BINARY = Join-Path $releaseDir 'vpn233-subscribe-server.exe'
+                Invoke-Native npm @('run', 'test:ui', '--prefix', 'admin-web')
+            }
+            finally { $env:VPN233_UI_BINARY = $previousUIBinary }
         }
         Invoke-Step 'real Windows release packaging/checksums/privacy/docs links' {
-            Invoke-Native (Get-Bash) @('-c', 'PLATFORM=windows-x86_64 TARGET=x86_64-pc-windows-msvc EXE_SUFFIX=.exe VERSION="$(tr -d ''\r\n'' < version.txt)" TARGET_DIR=target/release BUNDLE_ROOT=target/verify-package bash .github/scripts/assemble-bundle.sh')
+            $previousTarget = $env:TARGET_DIR
+            try {
+                $env:TARGET_DIR = $releaseDir.Replace('\', '/')
+                Invoke-Native (Get-Bash) @('-c', 'PLATFORM=windows-x86_64 TARGET=x86_64-pc-windows-msvc EXE_SUFFIX=.exe VERSION="$(tr -d ''\r\n'' < version.txt)" BUNDLE_ROOT=target/verify-package bash .github/scripts/assemble-bundle.sh')
+            }
+            finally { $env:TARGET_DIR = $previousTarget }
         }
     }
+    if ($cacheTicket -and -not $script:Failures) {
+        $saved = Invoke-QuickCache @('store', '--ticket', $cacheTicket, '--checks', [string]$script:Checks, '--elapsed', $watch.Elapsed.TotalSeconds.ToString('F2', [Globalization.CultureInfo]::InvariantCulture))
+        if ($saved) { Write-Host $saved.message }
+        $cacheFinished = $true
+    }
 }
-finally { Pop-Location }
+finally {
+    if ($Quick -and -not $cacheFinished) {
+        if ($cacheTicket) { $null = Invoke-QuickCache @('invalidate', '--ticket', $cacheTicket) }
+        else { $null = Invoke-QuickCache @('clear') }
+    }
+    Pop-Location
+}
 $watch.Stop()
 $mode = 'FULL'
 if ($Quick) { $mode = 'QUICK (not release validation)' }
-elseif ($SkipRust -or $SkipWeb -or $SkipScripts -or $SkipDocs -or $SkipE2E -or $SkipAudit) { $mode = 'PARTIAL (not release validation)' }
+if ($SkipRust -or $SkipWeb -or $SkipScripts -or $SkipDocs -or $SkipE2E -or $SkipAudit) { $mode = 'PARTIAL (not release validation)' }
 Write-Host ($mode + ': ' + $script:Checks + ' checks, ' + $script:Failures + ' failures, ' + [math]::Round($watch.Elapsed.TotalSeconds, 2) + 's')
 if ($script:Failures) { exit 1 }
 exit 0

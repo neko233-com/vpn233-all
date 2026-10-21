@@ -136,11 +136,11 @@ pub fn run_update() -> Result<()> {
     anyhow::ensure!(path.exists(), "update script not found: {}", path.display());
     let status = if cfg!(windows) {
         ProcessCommand::new("powershell")
-            .args(["-NoProfile", "-File"])
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
             .arg(&path)
             .status()?
     } else {
-        ProcessCommand::new("sh").arg(&path).status()?
+        ProcessCommand::new("bash").arg(&path).status()?
     };
     anyhow::ensure!(status.success(), "update script failed with {status}");
     Ok(())

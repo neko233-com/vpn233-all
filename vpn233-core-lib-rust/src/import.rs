@@ -128,25 +128,81 @@ fn import_clash(value: &Value, index: usize) -> Result<ProxyNode, &'static str> 
 }
 
 fn validate_node(node: &mut ProxyNode, index: usize) -> Result<(), &'static str> {
-    let server = nodes::node_server(node).ok_or("proxy definition is missing a server")?;
-    if server.chars().any(|ch| {
-        ch.is_control() || ch.is_whitespace() || matches!(ch, '/' | '@' | ',' | '#' | ';')
-    }) {
-        return Err("proxy definition has an invalid server");
+    let kind = nodes::node_type_lower(node).unwrap_or_default();
+    if kind == "wireguard" && node.contains_key("peers") {
+        let peers = node
+            .get_mut("peers")
+            .and_then(Value::as_sequence_mut)
+            .filter(|peers| !peers.is_empty())
+            .ok_or("WireGuard peers must be a nonempty sequence")?;
+        for peer in peers {
+            let peer = peer
+                .as_mapping_mut()
+                .ok_or("WireGuard peer must be a mapping")?;
+            validate_server(
+                peer.get(string("server"))
+                    .and_then(Value::as_str)
+                    .ok_or("WireGuard peer is missing a server")?,
+            )?;
+            let port = peer
+                .get(string("port"))
+                .and_then(|value| {
+                    value
+                        .as_u64()
+                        .and_then(|port| u16::try_from(port).ok())
+                        .or_else(|| value.as_str().and_then(|port| port.parse::<u16>().ok()))
+                })
+                .filter(|port| *port > 0)
+                .ok_or("WireGuard peer has an invalid port")?;
+            peer.insert(string("port"), number(port.into()));
+        }
+    } else {
+        validate_server(nodes::node_server(node).ok_or("proxy definition is missing a server")?)?;
+        if kind == "mieru" && node.contains_key("port-range") {
+            if node.contains_key("port") {
+                return Err("Mieru port and port-range cannot be combined");
+            }
+            let (start, end) = nodes::node_str(node, "port-range")
+                .and_then(|range| range.split_once('-'))
+                .and_then(|(start, end)| {
+                    Some((start.parse::<u16>().ok()?, end.parse::<u16>().ok()?))
+                })
+                .filter(|(start, end)| *start > 0 && start <= end)
+                .ok_or("Mieru port-range must contain valid ordered ports")?;
+            node.insert("port-range".into(), string(format!("{start}-{end}")));
+        } else {
+            let port = nodes::node_u16(node, "port")
+                .filter(|port| *port > 0)
+                .ok_or("proxy definition has an invalid port")?;
+            if node.contains_key("port-range") {
+                return Err("unsupported port-range proxy definition");
+            }
+            node.insert("port".into(), number(port.into()));
+        }
     }
-    let port = nodes::node_u16(node, "port")
-        .filter(|port| *port > 0)
-        .ok_or("proxy definition has an invalid port")?;
-    // Exporters consume a single endpoint. Do not silently flatten a range.
-    if node.contains_key("port-range") {
-        return Err("port-range proxy definitions require a concrete port");
+    if kind == "vmess" {
+        // sing-box omits AEAD defaults, while Mihomo requires alterId explicitly.
+        node.entry("alterId".into()).or_insert_with(|| number(0));
+        node.entry("cipher".into())
+            .or_insert_with(|| string("auto"));
     }
     if nodes::node_str(node, "dialer-proxy").is_some_and(|value| !value.is_empty()) {
         return Err("proxy chains with dialer-proxy are not supported");
     }
-    node.insert("port".into(), number(port.into()));
     if nodes::node_name(node).is_none() {
         node.insert("name".into(), string(format!("vpn233-{}", index + 1)));
+    }
+    Ok(())
+}
+
+fn validate_server(server: &str) -> Result<(), &'static str> {
+    if server.is_empty() {
+        return Err("proxy definition is missing a server");
+    }
+    if server.chars().any(|ch| {
+        ch.is_control() || ch.is_whitespace() || matches!(ch, '/' | '@' | ',' | '#' | ';')
+    }) {
+        return Err("proxy definition has an invalid server");
     }
     Ok(())
 }

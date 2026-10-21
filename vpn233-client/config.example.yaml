@@ -3,7 +3,7 @@ socks_port: 1080
 http_port: 1081
 web_addr: "127.0.0.1:8082"
 admin_user: "root"
-admin_password: "root"
+admin_password: "change-me-admin-password"
 upstream_mode: "direct"
 subscription_url: ""
 stats_file: "vpn233-client/data/stats.json"

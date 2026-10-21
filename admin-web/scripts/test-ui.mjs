@@ -21,9 +21,13 @@ const port = probe.address().port
 await new Promise(done => probe.close(done))
 const origin = `http://127.0.0.1:${port}`
 const config = join(work, 'config.yaml')
+const structured = JSON.stringify({ proxies: [
+  { name: 'WireGuard synthetic', type: 'wireguard', ip: '192.0.2.2', 'private-key': Buffer.alloc(32).toString('base64'), peers: [{ server: 'example.invalid', port: 51820, 'public-key': Buffer.alloc(32, 1).toString('base64'), 'allowed-ips': ['0.0.0.0/0'] }] },
+  { name: 'Mieru synthetic', type: 'mieru', server: 'example.invalid', 'port-range': '2090-2099', transport: 'TCP', username: 'change-me', password: 'change-me' },
+] })
 await writeFile(config, JSON.stringify({
   server: { host: '127.0.0.1', http_port: port, data_dir: join(work, 'data'), web_dir: join(root, 'dist'), admin_user: 'root', admin_password: 'change-me-ui-password' },
-  subscriptions: [{ name: 'synthetic', links: ['trojan://change-me@example.invalid:443#Synthetic'], url: '' }],
+  subscriptions: [{ name: 'synthetic', links: ['trojan://change-me@example.invalid:443#Synthetic', structured], url: '' }],
 }), { mode: 0o600 })
 const fixtureEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^VPN233_/i.test(key)))
 const child = spawn(binary, ['--config', config], { cwd: work, windowsHide: true, stdio: 'ignore', env: { ...fixtureEnv, VPN233_CONFIG: config, VPN233_ADMIN_USER: 'root', VPN233_ADMIN_PASSWORD: 'change-me-ui-password' } })
@@ -69,6 +73,38 @@ try {
   assert.ok(!storage.persistentAuth && storage.sessionAuth, 'authentication must be session scoped')
   const response = await page.request.get(`${origin}/api/v1/formats`)
   assert.ok(response.ok(), 'format discovery failed')
+  await page.locator('.nav-item').nth(0).click()
+  await expect(page.locator('.node-status-card').filter({ hasText: 'WireGuard synthetic' })).toBeVisible()
+  await expect(page.locator('.node-status-card').filter({ hasText: 'Mieru synthetic' })).toContainText('example.invalid:2090-2099')
+  await page.locator('.nav-item').nth(3).click()
+  await page.locator('.page-heading .primary-button').click()
+  const groupModal = page.locator('.modal')
+  await groupModal.locator('input').nth(0).fill('ui-structured')
+  await groupModal.locator('input').nth(1).fill('UI structured group')
+  const wg = groupModal.locator('.node-option').filter({ hasText: 'WireGuard synthetic' }).locator('input')
+  const mieru = groupModal.locator('.node-option').filter({ hasText: 'Mieru synthetic' }).locator('input')
+  await wg.check()
+  await expect(mieru).not.toBeChecked()
+  await mieru.check()
+  await wg.uncheck()
+  await expect(mieru).toBeChecked()
+  await wg.check()
+  await groupModal.locator('button.primary-button').click()
+  await expect(groupModal).not.toBeVisible()
+  const groupRow = page.locator('tr').filter({ hasText: 'UI structured group' })
+  await expect(groupRow.locator('td').nth(1)).toHaveText('2')
+  await groupRow.locator('.table-action').first().click()
+  await expect(wg).toBeChecked()
+  await expect(mieru).toBeChecked()
+  await expect(groupModal.locator('textarea')).toHaveValue('')
+  await wg.uncheck()
+  await groupModal.locator('button.primary-button').click()
+  await expect(groupModal).not.toBeVisible()
+  await expect(groupRow.locator('td').nth(1)).toHaveText('1')
+  await groupRow.locator('.table-action').first().click()
+  await expect(wg).not.toBeChecked()
+  await expect(mieru).toBeChecked()
+  await groupModal.locator('.modal-foot button[type=button]').click()
   await page.locator('.nav-item').nth(7).click()
   const mirrorSelect = page.locator('.deploy-panel .mirror-select select')
   await mirrorSelect.selectOption('')
@@ -104,7 +140,7 @@ try {
   assert.ok(await page.evaluate(() => sessionStorage.length === 0), 'logout must clear authentication')
   assert.equal(outside.length, 0, 'UI contacted an external service')
   assert.equal(runtimeErrors.length, 0, 'UI raised a browser runtime error')
-  console.log('UI passed: real login/rejection, session privacy, mirror/direct commands, token/link/QR, reload, mobile navigation, logout, zero external requests')
+  console.log('UI passed: real login/rejection, session privacy, structured nodes/group selection and removal, mirror/direct commands, token/link/QR, reload, mobile navigation, logout, zero external requests')
 } finally {
   if (browser) await browser.close()
   if (child.exitCode === null && !spawnFailed) {

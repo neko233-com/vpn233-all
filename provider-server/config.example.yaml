@@ -2,7 +2,7 @@
 # Copy this file to an untracked config.yaml (or run --init) and replace every
 # placeholder before exposing the service. Never commit a real config.yaml.
 
-listen_addr: "0.0.0.0"
+listen_addr: "127.0.0.1"
 listen_port: 8080
 
 # First-boot admin credentials. Change the password before public exposure, or

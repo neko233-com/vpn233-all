@@ -136,6 +136,8 @@ pub(crate) struct NodeInfo {
     pub(crate) protocol: String,
     pub(crate) server: String,
     pub(crate) port: u16,
+    pub(crate) endpoint: String,
+    pub(crate) payload: String,
     pub(crate) link: String,
 }
 

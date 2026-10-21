@@ -23,7 +23,7 @@ part of the contribution rules.
 
 | Tool | Version |
 | --- | --- |
-| Rust | 1.96.0 (`rust-toolchain.toml` pins it) |
+| Rust | 1.99.1 (`rust-toolchain.toml` pins it; minimum supported version 1.96) |
 | Node.js | 24.x (admin web) |
 | Python | 3.11+ (verification, E2E and release tooling) |
 | Git Bash | Required on Windows for the `.sh` test suites |

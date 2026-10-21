@@ -18,6 +18,25 @@ ARCHIVES = runpy.run_path(str(SCRIPTS / "create-archives.py"))
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_commit_and_tag_messages_are_scanned_and_redacted(self):
+        for object_kind in ("commit", "tag"):
+            with self.subTest(kind=object_kind), tempfile.TemporaryDirectory(prefix="vpn233-metadata-test-") as scratch:
+                repo = Path(scratch)
+                subprocess.run(["git", "init", "--quiet", str(repo)], check=True)
+                subprocess.run(["git", "-C", str(repo), "config", "user.name", "synthetic-test"], check=True)
+                subprocess.run(["git", "-C", str(repo), "config", "user.email", "fixture@example.invalid"], check=True)
+                (repo / "public.txt").write_text("public fixture")
+                subprocess.run(["git", "-C", str(repo), "add", "public.txt"], check=True)
+                secret = "gh" + "p_" + "Q" * 35
+                message = secret if object_kind == "commit" else "public fixture"
+                subprocess.run(["git", "-C", str(repo), "commit", "--quiet", "-m", message], check=True)
+                if object_kind == "tag":
+                    subprocess.run(["git", "-C", str(repo), "tag", "-a", "v0.0.1", "-m", secret], check=True)
+                result = subprocess.run([sys.executable, str(SCRIPTS / "check-privacy.py"), "--repository", str(repo), "--history-only"], capture_output=True)
+                self.assertEqual(1, result.returncode)
+                self.assertIn(("history:" + object_kind + ":").encode(), result.stdout)
+                self.assertNotIn(secret.encode(), result.stdout + result.stderr)
+
     def test_runtime_paths_rejected(self):
         for path in ("config.yaml", "nested/.env.prod", "data/users.json", "runtime/state.json", "backups/old.txt", "logs/output.log"):
             with self.subTest(path=path):

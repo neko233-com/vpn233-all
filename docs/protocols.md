@@ -13,7 +13,7 @@ title: 协议与客户端兼容
 | Clash / Mihomo YAML | 上述协议及 Hysteria、WireGuard、Snell、SSH、Mieru，保留节点字段 |
 | sing-box JSON | 下表 sing-box 的 9 种出站协议；映射常见 TLS、REALITY、WS、HTTPUpgrade、gRPC、HTTP2 字段 |
 
-`detour`、`dialer-proxy` 链式出站、不支持的 sing-box 传输和没有具体端口的范围设置会拒绝导入。Clash 节点保留字段；sing-box 导入只映射已实现字段，高级 TLS、路由和传输选项不保证完整保留。全局控制器、外部规则集和测速 URL 不随节点导入。跨格式转换后应检查目标客户端配置，不能只凭协议名称判断所有选项兼容。
+`detour`、`dialer-proxy` 链式出站及不支持的 sing-box 传输会拒绝导入。Mihomo 的 WireGuard `peers` 完整语法、Mieru `port-range` 保留原有结构；范围不能与 `port` 并写，也不会转换成单端口 URI。Clash 节点保留字段；sing-box 导入只映射已实现字段，高级 TLS、路由和传输选项不保证完整保留。VMess 导入会补齐 Mihomo 要求的 AEAD 默认字段。全局控制器、外部规则集和测速 URL 不随节点导入。跨格式转换后应检查目标客户端配置，不能只凭协议名称判断所有选项兼容。
 
 ## 导出
 
@@ -34,3 +34,5 @@ title: 协议与客户端兼容
 默认不指定公共 DNS 或第三方测速地址，解析使用系统或目标客户端的默认 DNS；历史 Auto/Fallback 组名保留为手动选择组。用户可在客户端自行设置探测。Provider 的节点部署清单实际生成 **8 种**入站：VLESS、VMess、Trojan、SS、Hysteria2、TUIC、AnyTLS、SOCKS5；与核心库的 15 种订阅兼容能力不同，运行需外部 Mihomo。安装与自签证书边界见 [部署](deployment.md)。
 
 字段参考 [Mihomo 官方配置](https://wiki.metacubex.one/en/config/proxies/) 和 [sing-box 出站配置](https://sing-box.sagernet.org/configuration/outbound/)。使用目标客户端的配置检查确认版本兼容。
+
+官方 Mihomo 配置解析门禁覆盖全部 15 种出站协议、10 种 URI、4 种 Base64、常见传输、REALITY、WireGuard peers、Mieru 范围和 sing-box 导入往返，共 57 个合成配置。检查仅执行 `mihomo -t`，不启动代理监听、不连接真实节点；它验证配置被该版本接受，不代表跨客户端或公网连通性通过。运行方式见 [验证](testing.md)。

@@ -14,6 +14,7 @@ title: API 与访问策略
 | Provider | `/api/v1/nodes` | 使用独立 feed token 的节点源 |
 | Subscribe | `/api/v1/formats` | 动态协议和格式矩阵 |
 | Subscribe | `/api/status`、`POST /api/auth/login` | 状态、登录 |
+| Subscribe | `GET /api/nodes`、`GET /api/refresh` | 认证后的节点清单、重新解析与数量 |
 | Subscribe | `/api/admin/tokens` | 创建和列出令牌 |
 | Subscribe | `POST /api/admin/tokens/{token}/renew`、`/reset` | 续期、重置配额 |
 | Subscribe | `/api/admin/accounts`、`/api/admin/groups` | 账户、分组 |
@@ -32,6 +33,10 @@ title: API 与访问策略
 | `X-VPN233-Skipped` | 解析失败的条目数与格式不支持的节点数之和 |
 
 `Rendered` 是格式筛选结果，不代表远端节点健康或连接验证通过。解析错误计入 `Skipped` 而不计入 `Nodes`，因此不能简单用 `Nodes - Skipped` 计算输出数。
+
+`GET /api/nodes` 要求管理认证，返回每个节点的 `name`、`protocol`、`server`、`port`、`endpoint`、`link`、`payload`。`endpoint` 用于显示完整端口范围或 WireGuard 多个 peer；兼容字段 `server` / `port` 对这种节点仅表示首个端点。`link` 为支持的分享 URI，无法表示时为空。`payload` 是保留节点字段的紧凑 JSON 单节点数组，可直接作为分组 `node_links` 的一项；后台选择节点使用该字段，避免跨格式丢失选项。`node_links` 还接受已支持的 URI、Base64 或结构化节点集合，每项限 8192 字节、最多保留 256 项，格式无效或包含解析错误的项不会保存。分组和提供者 `node_count` 按成功解析并去重后的节点计算。
+
+这些管理字段可能含节点凭据，只应在已认证会话中使用，不应写入公开日志、分享链接或外部分析服务。节点清单和分组内容不代表节点连通性检测结果。
 
 `quota_period` 支持 `lifetime`、`calendar_month`、`monthly_from_creation`、`weekly`、`daily`。`duration` 支持 `seven_days`、`one_month`、`one_year`，显式 `expires_at` 优先；`other_uid` 可与自己的计费系统对接。过期记录保留以支持续期。订阅响应流量与真实代理流量是不同指标。
 

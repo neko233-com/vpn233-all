@@ -150,7 +150,7 @@ def main() -> int:
     global ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", type=Path, default=ROOT, help="Git repository or bare mirror to scan")
-    parser.add_argument("--history", action="store_true", help="scan every reachable historical Git blob")
+    parser.add_argument("--history", action="store_true", help="scan reachable blobs, commit metadata and annotated tags")
     parser.add_argument("--history-only", action="store_true", help="only history; supports a bare cleanup mirror")
     parser.add_argument("--artifacts", action="append", default=[], metavar="DIRECTORY", help="scan an extracted public artifact tree")
     parser.add_argument("--artifacts-only", action="store_true")
@@ -190,16 +190,18 @@ def main() -> int:
         historical_entries = []
         for entry in git("rev-list", "--objects", "--all").splitlines():
             oid, _, raw = entry.partition(b" ")
-            if raw:
-                historical_entries.append((oid.decode("ascii"), raw))
+            historical_entries.append((oid.decode("ascii"), raw))
         objects = git_objects([oid for oid, _ in historical_entries])
         for oid, raw in historical_entries:
             kind, data = objects[oid]
-            if kind != "blob":
-                continue
-            # Historical filenames alone are not a secret. Current Git
-            # candidates still enforce the sensitive-path exclusion.
-            inspect("history:" + raw.decode("utf-8", "surrogateescape"), data, path_gate=False)
+            if kind == "blob" and raw:
+                # Historical filenames alone are not a secret. Current Git
+                # candidates still enforce the sensitive-path exclusion.
+                inspect("history:" + raw.decode("utf-8", "surrogateescape"), data, path_gate=False)
+            elif kind in ("commit", "tag"):
+                # Messages and annotated tags are also public after a push.
+                # Report only their object identity, never their contents.
+                inspect(f"history:{kind}:{oid[:12]}", data, path_gate=False)
 
     for directory in options.artifacts:
         tree = Path(directory).resolve()

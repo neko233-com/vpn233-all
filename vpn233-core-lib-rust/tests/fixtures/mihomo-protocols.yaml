@@ -1,0 +1,18 @@
+# Synthetic protocol syntax fixtures. Key placeholders are replaced with
+# deterministic test-only bytes in memory; these are not deployable nodes.
+proxies:
+  - {name: vless, type: vless, server: example.invalid, port: 443, uuid: 11111111-2222-3333-4444-555555555555, tls: true, servername: tls.example.invalid}
+  - {name: vmess, type: vmess, server: example.invalid, port: 443, uuid: 11111111-2222-3333-4444-555555555555, alterId: 0, cipher: auto, tls: true, servername: tls.example.invalid}
+  - {name: trojan, type: trojan, server: example.invalid, port: 443, password: change-me, sni: tls.example.invalid}
+  - {name: ss, type: ss, server: example.invalid, port: 8388, cipher: aes-256-gcm, password: change-me}
+  - {name: ssr, type: ssr, server: example.invalid, port: 8388, cipher: aes-256-cfb, password: change-me, protocol: origin, obfs: plain}
+  - {name: hysteria2, type: hysteria2, server: example.invalid, port: 443, password: change-me, sni: tls.example.invalid, obfs: salamander, obfs-password: change-me}
+  - {name: tuic, type: tuic, server: example.invalid, port: 443, uuid: 11111111-2222-3333-4444-555555555555, password: change-me, sni: tls.example.invalid, alpn: [h3], congestion-controller: bbr}
+  - {name: anytls, type: anytls, server: example.invalid, port: 443, password: change-me, sni: tls.example.invalid, client-fingerprint: chrome}
+  - {name: socks5, type: socks5, server: example.invalid, port: 1080, username: change-me, password: change-me}
+  - {name: http, type: http, server: example.invalid, port: 443, username: change-me, password: change-me, tls: true, sni: tls.example.invalid}
+  - {name: hysteria, type: hysteria, server: example.invalid, port: 443, auth-str: change-me, protocol: udp, up: '30 Mbps', down: '100 Mbps', sni: tls.example.invalid}
+  - {name: wireguard, type: wireguard, server: example.invalid, port: 51820, ip: 192.0.2.2, private-key: __WG_PRIVATE__, public-key: __WG_PUBLIC__, udp: true}
+  - {name: snell, type: snell, server: example.invalid, port: 443, psk: change-me, version: 3}
+  - {name: ssh, type: ssh, server: example.invalid, port: 22, username: change-me, password: change-me}
+  - {name: mieru, type: mieru, server: example.invalid, port: 443, username: change-me, password: change-me, transport: TCP, multiplexing: MULTIPLEXING_LOW}

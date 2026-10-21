@@ -13,6 +13,12 @@
   offline installation and application rollback after failed activation.
 - Add quick incremental verification, complete local verification, automatic
   Linux/Windows service E2E and real Chromium admin interaction tests.
+- Check generated inbounds and subscription/import/transport fixtures with the
+  checksum-verified official Mihomo parser. Fix its VLESS/VMess UUID, Trojan
+  user-list and Hysteria2/TUIC/AnyTLS user-map schemas.
+- Run bundled self-update scripts with Bash on Unix and the explicit local
+  PowerShell execution policy on Windows; test actual executable dispatch,
+  paths containing spaces and failure propagation.
 - Reuse compiled binaries and UI artifacts in CI and release jobs; build
   reproducible archives, remap machine paths and verify package allowlists,
   privacy and SHA256SUMS before publication.
@@ -21,7 +27,8 @@
 - Scan working-tree candidates, the index, historical blobs and public artifacts;
   remove tracked legacy runtime configuration and keep explicit public examples.
 - Update compatible Rust dependencies and frontend/build dependencies with locked
-  versions. Encrypted proxy transports remain an external core boundary.
+  versions; pin the Rust 1.99.1 toolchain. Encrypted proxy transports remain an
+  external core boundary.
 - Restrict JWT crypto to the required HS256 adapter and remove unused RSA/EC
   dependencies. Replace deprecated YAML dependencies with the YAML organization's
   maintained [yaml_serde](https://github.com/yaml/yaml-serde) fork.

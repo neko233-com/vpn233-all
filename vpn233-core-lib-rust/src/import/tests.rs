@@ -179,6 +179,65 @@ fn unsupported_transports_and_chains_are_explicit_errors() {
 }
 
 #[test]
+fn vmess_aead_defaults_are_normalized_for_mihomo() {
+    for payload in [
+        r#"{"outbounds":[{"type":"vmess","server":"example.invalid","server_port":443,"uuid":"change-me"}]}"#,
+        "proxies:\n- {type: vmess, server: example.invalid, port: 443, uuid: change-me}",
+    ] {
+        let (nodes, errors) = parse_subscription(payload);
+        assert!(errors.is_empty());
+        assert_eq!(nodes[0]["alterId"], number(0));
+        assert_eq!(nodes[0]["cipher"], string("auto"));
+    }
+    let (nodes, errors) = parse_subscription("proxies:\n- {type: vmess, server: example.invalid, port: 443, uuid: change-me, alterId: 64, cipher: aes-128-gcm}");
+    assert!(errors.is_empty());
+    assert_eq!(nodes[0]["alterId"], number(64));
+    assert_eq!(nodes[0]["cipher"], string("aes-128-gcm"));
+}
+
+#[test]
+fn structured_wireguard_peers_and_mieru_ranges_are_preserved() {
+    let payload = "proxies:\n- type: wireguard\n  private-key: change-me\n  peers:\n  - {server: example.invalid, port: '51820', public-key: change-me, allowed-ips: [0.0.0.0/0]}\n- {type: mieru, server: example.invalid, port-range: 2090-2099, transport: TCP, username: change-me, password: change-me}";
+    let (nodes, errors) = parse_subscription(payload);
+    assert!(errors.is_empty());
+    assert_eq!(nodes.len(), 2);
+    assert_eq!(nodes[0]["peers"][0]["port"], number(51820));
+    assert!(!nodes[0].contains_key("server"));
+    assert!(!nodes[0].contains_key("port"));
+    assert_eq!(nodes[1]["port-range"], string("2090-2099"));
+    assert!(!nodes[1].contains_key("port"));
+    let rendered =
+        crate::render_subscription(formats::SubscriptionFormat::Clash, &nodes, "demo").unwrap();
+    let yaml: Value = serde_yaml::from_str(&rendered).unwrap();
+    assert_eq!(yaml["proxies"][0]["peers"], nodes[0]["peers"]);
+    assert_eq!(yaml["proxies"][1]["port-range"], string("2090-2099"));
+    for node in &nodes {
+        assert!(!formats::SubscriptionFormat::Links.supports_node(node));
+        assert!(!formats::SubscriptionFormat::SingBox.supports_node(node));
+    }
+}
+
+#[test]
+fn malformed_wireguard_peers_and_mieru_ranges_fail_closed() {
+    for proxy in [
+        "{type: wireguard, peers: []}",
+        "{type: wireguard, peers: [{server: example.invalid, port: 0}]}",
+        "{type: wireguard, peers: [{server: example.invalid, port: 65536}]}",
+        "{type: wireguard, peers: [{server: 'private-password-change-me, invalid', port: 51820}]}",
+        "{type: mieru, server: example.invalid, port-range: 443-440}",
+        "{type: mieru, server: example.invalid, port-range: 0-443}",
+        "{type: mieru, server: example.invalid, port-range: 443-65536}",
+        "{type: mieru, server: example.invalid, port: 443, port-range: 443-444}",
+        "{type: http, server: example.invalid, port: 443, port-range: 443-444}",
+    ] {
+        let (nodes, errors) = parse_subscription(&format!("proxies:\n- {proxy}"));
+        assert!(nodes.is_empty());
+        assert_eq!(errors.len(), 1);
+        assert!(!format!("{errors:?}").contains("private-password"));
+    }
+}
+
+#[test]
 fn no_generated_format_configures_third_party_probes_or_dns() {
     let node = crate::parse_link(LINKS[3], 0).unwrap();
     for format in formats::SubscriptionFormat::all() {

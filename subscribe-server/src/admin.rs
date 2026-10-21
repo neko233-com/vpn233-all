@@ -95,11 +95,43 @@ pub(crate) async fn nodes(
     let result: Vec<NodeInfo> = parsed
         .iter()
         .filter_map(|node| {
+            let peers = node.get("peers").and_then(serde_yaml::Value::as_sequence);
+            let first_peer = peers.and_then(|peers| peers.first());
+            let server = node
+                .get("server")
+                .and_then(serde_yaml::Value::as_str)
+                .or_else(|| first_peer?.get("server")?.as_str())?;
+            let range = node.get("port-range").and_then(serde_yaml::Value::as_str);
+            let port = vpn233_core_lib_rust::nodes::node_u16(node, "port")
+                .or_else(|| u16::try_from(first_peer?.get("port")?.as_u64()?).ok())
+                .or_else(|| range?.split_once('-')?.0.parse::<u16>().ok())?;
+            let endpoint = if let Some(peers) = peers {
+                peers
+                    .iter()
+                    .filter_map(|peer| {
+                        Some(format_endpoint(
+                            peer.get("server")?.as_str()?,
+                            &peer.get("port")?.as_u64()?.to_string(),
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else {
+                format_endpoint(
+                    server,
+                    &range.map(str::to_owned).unwrap_or_else(|| port.to_string()),
+                )
+            };
+            let payload =
+                serde_json::to_string(&[vpn233_core_lib_rust::nodes::strip_internal_keys(node)])
+                    .ok()?;
             Some(NodeInfo {
                 name: node.get("name")?.as_str()?.into(),
                 protocol: node.get("type")?.as_str()?.into(),
-                server: node.get("server")?.as_str()?.into(),
-                port: node.get("port")?.as_u64()? as u16,
+                server: server.into(),
+                port,
+                endpoint,
+                payload,
                 link: node
                     .get(vpn233_core_lib_rust::link::LINK_KEY)
                     .and_then(serde_yaml::Value::as_str)
@@ -110,6 +142,22 @@ pub(crate) async fn nodes(
         })
         .collect();
     Json(result).into_response()
+}
+
+fn format_endpoint(server: &str, port: &str) -> String {
+    if server.contains(':') {
+        format!("[{server}]:{port}")
+    } else {
+        format!("{server}:{port}")
+    }
+}
+
+fn payload_node_count(payloads: &[String]) -> usize {
+    let sources = payloads
+        .iter()
+        .map(|payload| (String::new(), payload.clone()))
+        .collect::<Vec<_>>();
+    parse_source_payloads(&sources).0.len()
 }
 
 pub(crate) async fn refresh(
@@ -155,7 +203,7 @@ pub(crate) async fn admin_providers(State(state): State<AppState>, headers: Head
             name: provider.name.clone(),
             version: provider.version.clone(),
             addresses: provider.addresses.clone(),
-            node_count: provider.node_links.len(),
+            node_count: payload_node_count(&provider.node_links),
             enabled: provider.enabled,
             online: provider.enabled && provider.last_seen.saturating_add(stale_after) > now,
             registered_at: provider.registered_at,
@@ -1153,7 +1201,7 @@ pub(crate) async fn admin_groups(State(state): State<AppState>, headers: HeaderM
         let node_count = if group.group_id == "all" {
             parse_source_payloads(&sources(&state, None).await).0.len()
         } else {
-            group.node_links.len()
+            payload_node_count(&group.node_links)
         };
         views.push(GroupView {
             group_id: group.group_id.clone(),
@@ -1202,7 +1250,7 @@ pub(crate) async fn admin_create_group(
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
     }
     let mut view = serde_json::to_value(&record).unwrap_or_default();
-    view["node_count"] = json!(record.node_links.len());
+    view["node_count"] = json!(payload_node_count(&record.node_links));
     (StatusCode::CREATED, Json(json!({"group": view}))).into_response()
 }
 

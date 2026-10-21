@@ -114,7 +114,7 @@ pub(crate) async fn render_subscription(
 ) -> Response {
     let format = match resolve_format(state, query, route_format).await {
         Ok(format) => format,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let Some(token) = token_allowed(state, headers, query).await else {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -177,11 +177,11 @@ async fn resolve_format(
     state: &AppState,
     query: &HashMap<String, String>,
     route_format: Option<SubscriptionFormat>,
-) -> Result<SubscriptionFormat, Response> {
+) -> Result<SubscriptionFormat, (StatusCode, &'static str)> {
     if let Some(raw) = query.get("format") {
         return match SubscriptionFormat::from_alias(raw) {
             Some(format) => Ok(format),
-            None => Err((StatusCode::BAD_REQUEST, "unknown subscription format").into_response()),
+            None => Err((StatusCode::BAD_REQUEST, "unknown subscription format")),
         };
     }
     if let Some(format) = route_format {

@@ -79,17 +79,19 @@ fn render_listener(manifest: &NodeManifest, port: &NodePort) -> String {
     match port.protocol.as_str() {
         "vless" => {
             listener.push_str("    users:\n");
-            listener.push_str(&format!("      - username: \"{uuid}\"\n"));
+            listener.push_str(&format!("      - uuid: \"{uuid}\"\n"));
             listener.push_str("        flow: \"\"\n");
             push_tls(&mut listener);
         }
         "vmess" => {
             listener.push_str("    users:\n");
-            listener.push_str(&format!("      - username: \"{uuid}\"\n"));
+            listener.push_str(&format!("      - uuid: \"{uuid}\"\n"));
             listener.push_str("        alterId: 0\n");
         }
         "trojan" => {
-            listener.push_str(&format!("    password: \"{password}\"\n"));
+            listener.push_str("    users:\n");
+            listener.push_str(&format!("      - username: \"{uuid}\"\n"));
+            listener.push_str(&format!("        password: \"{password}\"\n"));
             push_tls(&mut listener);
         }
         "ss" => {
@@ -98,19 +100,17 @@ fn render_listener(manifest: &NodeManifest, port: &NodePort) -> String {
         }
         "hysteria2" => {
             listener.push_str("    users:\n");
-            listener.push_str(&format!("      - password: \"{password}\"\n"));
+            listener.push_str(&format!("      \"{uuid}\": \"{password}\"\n"));
             push_tls(&mut listener);
         }
         "tuic" => {
             listener.push_str("    users:\n");
-            listener.push_str(&format!("      - uuid: \"{uuid}\"\n"));
-            listener.push_str(&format!("        password: \"{password}\"\n"));
+            listener.push_str(&format!("      \"{uuid}\": \"{password}\"\n"));
             push_tls(&mut listener);
         }
         "anytls" => {
             listener.push_str("    users:\n");
-            listener.push_str(&format!("      - username: \"{uuid}\"\n"));
-            listener.push_str(&format!("        password: \"{password}\"\n"));
+            listener.push_str(&format!("      \"{uuid}\": \"{password}\"\n"));
             push_tls(&mut listener);
         }
         "socks5" => {
@@ -1041,6 +1041,44 @@ mod tests {
             );
         }
         assert!(yaml.contains("mixed-port: 7890"));
+    }
+
+    #[test]
+    fn generated_inbound_authentication_matches_pinned_mihomo_schema() {
+        let manifest = manifest();
+        let yaml = render_mihomo_config(&manifest);
+        let document: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("valid YAML");
+        let listeners = document["listeners"].as_sequence().expect("listener list");
+        assert_eq!(listeners.len(), 8);
+        for listener in listeners {
+            let kind = listener["type"].as_str().expect("listener type");
+            match kind {
+                "vless" | "vmess" => {
+                    let user = &listener["users"][0];
+                    assert_eq!(user["uuid"].as_str(), Some(manifest.uuid.as_str()));
+                    assert!(user.get("username").is_none(), "UUID is not a username");
+                }
+                "trojan" | "socks" => {
+                    let user = &listener["users"][0];
+                    assert_eq!(user["username"].as_str(), Some(manifest.uuid.as_str()));
+                    assert_eq!(user["password"].as_str(), Some(manifest.password.as_str()));
+                    assert!(listener.get("password").is_none());
+                }
+                "hysteria2" | "tuic" | "anytls" => {
+                    let users = listener["users"].as_mapping().expect("user/password map");
+                    assert_eq!(users.len(), 1);
+                    assert_eq!(
+                        listener["users"][manifest.uuid.as_str()].as_str(),
+                        Some(manifest.password.as_str())
+                    );
+                }
+                "shadowsocks" => assert_eq!(
+                    listener["password"].as_str(),
+                    Some(manifest.password.as_str())
+                ),
+                _ => panic!("unexpected generated listener type"),
+            }
+        }
     }
 
     #[test]
