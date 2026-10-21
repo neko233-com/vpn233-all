@@ -3,8 +3,10 @@
 #
 # Offline unit tests for scripts/lib/mirrors.sh.
 #
-# Unit cases replace _vpn233_fetch_url with an in-process fake; the final HTTP
-# integration uses only a local loopback server and never external hosts. Run with:
+# Unit cases replace _vpn233_fetch_url with an in-process fake. Real loopback
+# HTTP integration has one owner: cargo test --locked -p vpn233-xtask --test network.
+# For an isolated run, use the prebuilt tool: network mirror-tests --shell sh.
+# Run these independent shell contracts with:
 #   bash scripts/tests/test-mirrors.sh
 set -Eeuo pipefail
 
@@ -362,13 +364,6 @@ assert_fail "sums lookup rejects duplicate filename" vpn233_sha256_from_sums "$S
 printf 'not-a-digest  invalid.bin\n' > "$SUMS"
 assert_fail "sums lookup rejects malformed digest" vpn233_sha256_from_sums "$SUMS" invalid.bin
 assert_fail "sha256 rejects embedded whitespace" vpn233_sha256_matches "$SUM_FILE" "$EXPECTED "
-
-# Real curl/HTTP integration stays on loopback and exercises production code,
-# including truncation, matching/mismatched Range responses and source isolation.
-XTASK="${VPN233_XTASK_BIN:-$SCRIPT_DIR/../../target/debug/vpn233-xtask}"
-if [[ ! -f "$XTASK" && -f "$XTASK.exe" ]]; then XTASK="$XTASK.exe"; fi
-[[ -f "$XTASK" ]] || { printf 'test-mirrors: prebuilt vpn233-xtask is required (VPN233_XTASK_BIN).\n' >&2; exit 1; }
-"$XTASK" network mirror-tests --shell sh --root "$SCRIPT_DIR/../.."
 
 # ---------------------------------------------------------------------------
 # Summary

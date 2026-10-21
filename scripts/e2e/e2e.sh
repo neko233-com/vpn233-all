@@ -600,7 +600,7 @@ ECHO_BASE="$(http_base "$ECHO_PORT")"
 remaining=$(( deadline - $(date +%s) ))
 [ "$remaining" -gt 0 ] && wait_for_http "$ECHO_BASE/" "$remaining" || fail "echo fixture did not serve HTTP before the readiness deadline"
 
-socks_body="$(curl -sS --max-time 20 --socks5-hostname "127.0.0.1:$CLIENT_SOCKS_PORT" "$ECHO_BASE/echo/socks")" ||
+socks_body="$(NO_PROXY='*' no_proxy='*' curl -sS --max-time 20 --noproxy '' --socks5-hostname "127.0.0.1:$CLIENT_SOCKS_PORT" "$ECHO_BASE/echo/socks")" ||
   fail "SOCKS5 proxy request failed"
 case "$socks_body" in
   *vpn233-e2e-echo*'/echo/socks'*) ;;
@@ -608,7 +608,7 @@ case "$socks_body" in
 esac
 note "SOCKS5 proxy request reached the echo server"
 
-http_body="$(curl -sS --max-time 20 -x "http://127.0.0.1:$CLIENT_HTTP_PORT" "$ECHO_BASE/echo/http")" ||
+http_body="$(NO_PROXY='*' no_proxy='*' curl -sS --max-time 20 --noproxy '' -x "http://127.0.0.1:$CLIENT_HTTP_PORT" "$ECHO_BASE/echo/http")" ||
   fail "HTTP proxy request failed"
 case "$http_body" in
   *vpn233-e2e-echo*'/echo/http'*) ;;

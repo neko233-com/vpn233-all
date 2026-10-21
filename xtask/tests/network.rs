@@ -17,11 +17,31 @@ fn command(args: &[&str], input: Option<&[u8]>) -> std::process::Output {
 
 #[test]
 fn actual_sh_http_matrix_preserves_all_23_cases() {
-    vpn233_xtask::network::run(&["mirror-tests".into(), "--shell".into(), "sh".into()]).unwrap();
+    let root = vpn233_xtask::support::root()
+        .unwrap()
+        .join("scripts/tests/../..");
+    vpn233_xtask::network::run(&[
+        "mirror-tests".into(),
+        "--shell".into(),
+        "sh".into(),
+        "--root".into(),
+        root.to_string_lossy().into_owned(),
+    ])
+    .unwrap();
 }
 #[test]
 fn actual_powershell_http_matrix_preserves_all_10_groups() {
-    vpn233_xtask::network::run(&["mirror-tests".into(), "--shell".into(), "ps".into()]).unwrap();
+    let mut args = vec!["mirror-tests".into(), "--shell".into(), "ps".into()];
+    let root = vpn233_xtask::support::root().unwrap();
+    let root = root.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    let root = if root.as_bytes().get(1) == Some(&b':') {
+        format!("/{}{}", root.as_bytes()[0] as char, &root[2..])
+    } else {
+        root
+    };
+    args.extend(["--root".into(), root]);
+    vpn233_xtask::network::run(&args).unwrap();
 }
 
 #[test]

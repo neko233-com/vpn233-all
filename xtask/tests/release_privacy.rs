@@ -990,28 +990,28 @@ fn all_platform_architecture_headers_are_enforced() {
 }
 #[test]
 fn tar_zip_payload_must_match_even_with_valid_manifest() {
-    let assets = Assets::new();
-    assets.make(&[], None, None);
-    let path = assets.directory().join("vpn233-rust-linux-x86_64.zip");
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .unwrap();
-    let mut writer = zip::ZipWriter::new_append(file).unwrap();
-    writer
-        .start_file(
-            "vpn233-rust-linux-x86_64/admin-web/dist/assets/extra.js",
-            zip::write::SimpleFileOptions::default(),
+    for name in ["admin-web/dist/assets/extra.js", "README.md"] {
+        let assets = Assets::new();
+        assets.make(&[], None, None);
+        assert_eq!(assets.verify(), Vec::<String>::new());
+        let variant = Assets::new();
+        variant.make(&[(name, b"public variant fixture\n".to_vec())], None, None);
+        assert_eq!(variant.verify(), Vec::<String>::new());
+        // Both matrices pass every structural/privacy/architecture gate first.
+        // Copy only the canonical ZIP to isolate the cross-format comparison:
+        // the first case changes a member name set, the second its byte SHA.
+        let archive = "vpn233-rust-linux-x86_64.zip";
+        fs::copy(
+            variant.directory().join(archive),
+            assets.directory().join(archive),
         )
         .unwrap();
-    writer.write_all(b"public fixture").unwrap();
-    writer.finish().unwrap();
-    assets.rehash();
-    assert!(has(
-        assets.verify(),
-        "tar/ZIP payload names or SHA256 differ"
-    ));
+        assets.rehash();
+        assert_eq!(
+            assets.verify(),
+            vec!["vpn233-rust-linux-x86_64: tar/ZIP payload names or SHA256 differ"]
+        );
+    }
 }
 #[test]
 fn malformed_svg_and_dtd_are_rejected_by_named_gate() {

@@ -294,6 +294,21 @@ struct Case<'a> {
     root: &'a Path,
     shell: &'a Path,
     kind: Kind,
+    sequence: std::cell::Cell<usize>,
+    stage: std::cell::Cell<&'static str>,
+    passed: std::cell::Cell<bool>,
+}
+impl Drop for Case<'_> {
+    fn drop(&mut self) {
+        if !self.passed.get() {
+            eprintln!(
+                "mirror-http: {} case {:02} failed during {}",
+                if self.kind == Kind::Sh { "SH" } else { "PS" },
+                self.sequence.get(),
+                self.stage.get()
+            );
+        }
+    }
 }
 struct Transfer {
     requests: Vec<Request>,
@@ -307,12 +322,17 @@ struct TransferOptions<'a> {
     installer: bool,
 }
 impl Case<'_> {
+    fn advance(&self, stage: &'static str) {
+        self.sequence.set(self.sequence.get() + 1);
+        self.stage.set(stage);
+    }
     fn transfer(
         &self,
         routes: &[&str],
         payload: &[u8],
         options: TransferOptions<'_>,
     ) -> Result<Transfer> {
+        self.advance("fixture");
         let TransferOptions {
             hash,
             budget,
@@ -396,17 +416,20 @@ impl Case<'_> {
             }
         }
         let begin = Instant::now();
+        self.stage.set("child-process");
         let output = crate::support::process_output(&mut command, None, Duration::from_secs(45))
             .map_err(|_| {
                 anyhow!("controlled HTTP downloader process exceeded deadline or could not start")
             })?;
         let elapsed = begin.elapsed();
+        self.stage.set("child-outcome");
         ensure!(
             output.status.success() == success,
             "controlled {:?} HTTP transfer outcome differs; private output withheld",
             if self.kind == Kind::Sh { "SH" } else { "PS" }
         );
         let text = [output.stdout.as_slice(), output.stderr.as_slice()].concat();
+        self.stage.set("log-privacy");
         ensure!(
             !text
                 .windows(prefixes[0].len())
@@ -421,6 +444,7 @@ impl Case<'_> {
             );
         }
         if success {
+            self.stage.set("verified-content");
             if installer {
                 ensure!(
                     temp.path()
@@ -440,6 +464,7 @@ impl Case<'_> {
                 "unverified mirror was cached"
             );
         } else {
+            self.stage.set("failure-preservation");
             ensure!(
                 fs::read(&destination)? == b"synthetic prior destination",
                 "failed transfer replaced previous destination"
@@ -453,6 +478,7 @@ impl Case<'_> {
                 ensure!(!cache.exists(), "failed mirror cached");
             }
         }
+        self.stage.set("response-assertions");
         Ok(Transfer {
             requests: server.requests(),
             elapsed,
@@ -461,10 +487,9 @@ impl Case<'_> {
 }
 
 pub(super) fn run(args: &[String]) -> Result<()> {
-    let root = option(args, "--root")?
-        .map(PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(crate::support::root)?;
+    let root = resolve_root(args).inspect_err(|_| {
+        eprintln!("mirror-http: setup failed during root-validation");
+    })?;
     match option(args, "--shell")?.as_deref().unwrap_or("all") {
         "sh" => sh(&root),
         "ps" => ps(&root),
@@ -475,6 +500,35 @@ pub(super) fn run(args: &[String]) -> Result<()> {
         _ => bail!("mirror shell must be sh, ps or all"),
     }
 }
+fn resolve_root(args: &[String]) -> Result<PathBuf> {
+    let root = option(args, "--root")?
+        .map(|value| {
+            #[cfg(windows)]
+            {
+                // Git Bash can leave /c/... unconverted when the caller sets
+                // MSYS2_ARG_CONV_EXCL. Normalize it before native filesystem IO.
+                let bytes = value.as_bytes();
+                if bytes.len() >= 3
+                    && bytes[0] == b'/'
+                    && bytes[1].is_ascii_alphabetic()
+                    && bytes[2] == b'/'
+                {
+                    return PathBuf::from(format!("{}:{}", bytes[1] as char, &value[2..]));
+                }
+            }
+            PathBuf::from(value)
+        })
+        .map(Ok)
+        .unwrap_or_else(crate::support::root)?;
+    let root = crate::support::canonical_path(&root)?;
+    ensure!(
+        root.join("scripts/lib/mirrors.sh").is_file()
+            && root.join("scripts/lib/mirrors.ps1").is_file()
+            && root.join("install.sh").is_file(),
+        "HTTP verification root is not a complete source checkout"
+    );
+    Ok(root)
+}
 
 fn sh(root: &Path) -> Result<()> {
     let shell =
@@ -483,6 +537,9 @@ fn sh(root: &Path) -> Result<()> {
         root,
         shell: &shell,
         kind: Kind::Sh,
+        sequence: std::cell::Cell::new(0),
+        stage: std::cell::Cell::new("initialization"),
+        passed: std::cell::Cell::new(false),
     };
     let payload: Vec<_> = (0..256u16)
         .map(|n| n as u8)
@@ -591,6 +648,7 @@ fn sh(root: &Path) -> Result<()> {
     );
     count += 1;
     for route in ["manifest-missing", "manifest-invalid", "manifest-duplicate"] {
+        case.advance("manifest-ordering");
         // Manifest retrieval is intentionally unverified; failure must precede
         // archive selection and any installation directory mutation.
         let server = Server::new(Kind::Sh, payload.clone())?;
@@ -626,6 +684,7 @@ fn sh(root: &Path) -> Result<()> {
         count += 1;
     }
     ensure!(count == 23, "SH HTTP coverage count differs");
+    case.passed.set(true);
     println!("SH real loopback HTTP: {count} cases passed");
     Ok(())
 }
@@ -643,6 +702,9 @@ fn ps(root: &Path) -> Result<()> {
         root,
         shell: &shell,
         kind: Kind::Ps,
+        sequence: std::cell::Cell::new(0),
+        stage: std::cell::Cell::new("initialization"),
+        passed: std::cell::Cell::new(false),
     };
     let mut payload = b"synthetic archive fixture\0".to_vec();
     payload.extend((0..256u16).map(|n| n as u8).cycle().take(256 * 512));
@@ -742,6 +804,7 @@ fn ps(root: &Path) -> Result<()> {
             "invalid PS hash reached HTTP"
         );
     }
+    case.stage.set("installer-fixture");
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default();
     for name in [
@@ -777,6 +840,39 @@ fn ps(root: &Path) -> Result<()> {
         result.requests.iter().any(|r| r.route == "good"),
         "real PS installer did not verify manifest hash before archive selection"
     );
+    case.passed.set(true);
     println!("PowerShell real loopback HTTP: 10 test groups passed (all original subcases)");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_roots_normalize_before_native_file_access() {
+        let root = crate::support::root().unwrap();
+        assert_eq!(resolve_root(&[]).unwrap(), root);
+        for variant in [root.clone(), root.join("scripts/tests/../..")] {
+            assert_eq!(
+                resolve_root(&["--root".into(), variant.to_string_lossy().into_owned()]).unwrap(),
+                root
+            );
+        }
+        #[cfg(windows)]
+        {
+            let native = path_arg(&root);
+            if native.as_bytes().get(1) == Some(&b':') {
+                let msys = format!("/{}{}", native.as_bytes()[0] as char, &native[2..]);
+                assert_eq!(resolve_root(&["--root".into(), msys]).unwrap(), root);
+            }
+        }
+        let incomplete = tempfile::tempdir().unwrap();
+        assert!(resolve_root(&["--root".into(), path_arg(incomplete.path())]).is_err());
+        assert!(resolve_root(&[
+            "--root".into(),
+            path_arg(&incomplete.path().join("missing"))
+        ])
+        .is_err());
+    }
 }

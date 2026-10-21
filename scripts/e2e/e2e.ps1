@@ -124,6 +124,14 @@ function Get-FreePort {
     throw 'could not allocate a free loopback port'
 }
 
+function Get-CurlNoProxyArgument {
+    # Legacy native invocation drops an empty argument unless it is quoted for
+    # the native command line. Modern argument passing preserves it directly.
+    $mode = Get-Variable -Name PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue
+    if ($null -eq $mode -or [string]$mode.Value -eq 'Legacy') { return '""' }
+    return ''
+}
+
 function Wait-HttpReady {
     param([string]$Url, [int]$Seconds)
     $deadline = (Get-Date).AddSeconds($Seconds)
@@ -651,15 +659,21 @@ try {
 
     $curl = Get-Command -Name 'curl.exe' -ErrorAction SilentlyContinue
     if ($null -eq $curl) { throw 'curl.exe is required for the Windows E2E proxy checks' }
-    $socksOut = & $curl.Source '--silent' '--show-error' '--max-time' '20' '--socks5-hostname' ('127.0.0.1:' + $ClientSocksPort) ($EchoBase + '/echo/socks')
-    if ($LASTEXITCODE -ne 0) { throw 'SOCKS5 proxy request failed' }
-    if (-not $socksOut.Contains('/echo/socks')) { throw 'SOCKS5 proxy returned unexpected body (redacted)' }
-    Write-Note 'SOCKS5 proxy request reached the echo server'
+    $noProxyArgument = Get-CurlNoProxyArgument
+    $previousNoProxy = $env:NO_PROXY
+    try {
+        # Exercise the real proxy even under a user's broad inherited bypass.
+        $env:NO_PROXY = '*'
+        $socksOut = & $curl.Source '--silent' '--show-error' '--max-time' '20' '--noproxy' $noProxyArgument '--socks5-hostname' ('127.0.0.1:' + $ClientSocksPort) ($EchoBase + '/echo/socks')
+        if ($LASTEXITCODE -ne 0) { throw 'SOCKS5 proxy request failed' }
+        if (-not $socksOut.Contains('/echo/socks')) { throw 'SOCKS5 proxy returned unexpected body (redacted)' }
+        Write-Note 'SOCKS5 proxy request reached the echo server'
 
-    $httpOut = & $curl.Source '--silent' '--show-error' '--max-time' '20' '-x' ('http://127.0.0.1:' + $ClientHttpPort) ($EchoBase + '/echo/http')
-    if ($LASTEXITCODE -ne 0) { throw 'HTTP proxy request failed' }
-    if (-not $httpOut.Contains('/echo/http')) { throw 'HTTP proxy returned unexpected body (redacted)' }
-    Write-Note 'HTTP proxy request reached the echo server'
+        $httpOut = & $curl.Source '--silent' '--show-error' '--max-time' '20' '--noproxy' $noProxyArgument '-x' ('http://127.0.0.1:' + $ClientHttpPort) ($EchoBase + '/echo/http')
+        if ($LASTEXITCODE -ne 0) { throw 'HTTP proxy request failed' }
+        if (-not $httpOut.Contains('/echo/http')) { throw 'HTTP proxy returned unexpected body (redacted)' }
+        Write-Note 'HTTP proxy request reached the echo server'
+    } finally { $env:NO_PROXY = $previousNoProxy }
     Step-End
 
     Step-Begin 'client stats and privacy endpoints'
