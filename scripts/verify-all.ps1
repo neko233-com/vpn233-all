@@ -198,6 +198,9 @@ try {
                 }
             }
         }
+        Invoke-Step 'installed archive startup, health and owned shutdown' {
+            Invoke-Native $script:XTask @('network', 'installed-lifecycle', '--assets', 'target/verify-package/assets', '--tag', ('v' + (Get-Content -LiteralPath 'version.txt' -Raw).Trim()))
+        }
     }
     if ($cacheTicket -and -not $script:Failures) {
         $saved = Invoke-QuickCache @('store', '--ticket', $cacheTicket, '--checks', [string]$script:Checks, '--elapsed', $watch.Elapsed.TotalSeconds.ToString('F2', [Globalization.CultureInfo]::InvariantCulture))

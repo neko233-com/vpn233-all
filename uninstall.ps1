@@ -1,7 +1,8 @@
 [CmdletBinding()]
-param([string]$InstallDir = $PSScriptRoot)
+param([string]$InstallDir = '')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if (-not $InstallDir) { $InstallDir = $PSScriptRoot }
 $base = [IO.Path]::GetFullPath($InstallDir)
 $layout = $null
 $layoutHelper = Join-Path $PSScriptRoot 'scripts/lib/layout.ps1'

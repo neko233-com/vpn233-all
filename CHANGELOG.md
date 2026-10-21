@@ -1,6 +1,23 @@
 # Changelog
 
-## [2.1.0] - 2026-10-22
+## [2.1.1] - 2026-10-22
+
+- Resolve the default installation directory in the script body so native
+  Windows PowerShell 5.1 can start, stop and uninstall without arguments.
+  Exercise the actual `-File` entry point in regression coverage.
+- Keep successful background launchers under explicit native process ownership,
+  with bounded private captures, deadlines and cleanup of owned descendants.
+- Install the already verified native archive offline and check real startup,
+  all health endpoints, UI, provider discovery, subscription rendering and
+  owned shutdown in Full verification and CI before publishing a tag.
+- Publish complete checksum-verified candidates as prereleases; promote to
+  stable/latest only after both public installation and online update gates
+  pass. Pages additionally requires the successful promotion job.
+- Report fixed diagnostic stages without private paths or raw errors. Use an
+  explicit one-second heartbeat in synthetic customer tests; production keeps
+  its documented 30-second default.
+
+## [2.1.0] - 2026-10-22 (prerelease; Windows startup acceptance failed)
 
 - Move repository verification, privacy, version preparation, deterministic
   archives, release checks, content-addressed Quick reports and network fixtures

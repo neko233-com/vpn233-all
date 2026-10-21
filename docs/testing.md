@@ -49,6 +49,12 @@ Quick 使用 Cargo 自身管理的锁定 crates 缓存，不逐次重扫用户�
 
 E2E 使用回环地址和合成凭据，不依赖真实代理节点。失败不打印私密日志或订阅响应。
 
+完整验证和 CI 的平台 E2E 还使用已经构建并校验的公开包执行离线安装生命周期：调用真实安装脚本，再由真实 `start` 启动三个业务程序，检查回环健康、前端、Provider 和订阅，核对进程身份后停止并确认监听关闭。Windows 使用实际 PowerShell 5.1，不以模拟 `Start-Process` 或休眠进程替代业务程序；该检查复用现成二进制和前端，不重复编译或重跑已有的完整 14 组 E2E，也不能替代发布后的真实联网安装升级。失败只打印固定阶段和受控错误类型，不输出路径、URL、配置或日志正文。
+
+已生成并校验平台归档后，可用 `cargo xtask network installed-lifecycle --assets target/verify-package/assets --tag v版本号` 单独执行这项离线检查。`--assets` 指定包含平台归档、`SHA256SUMS` 和 `version.txt` 的目录，工具消费校验后的归档，不接受已解包的安装目录替代。其结果明确标记 `online_installation_verified: false`。
+
+离线与公开客户测试仅在合成临时 Provider 配置中把心跳周期设为 1 秒，减少等待注册的耗时；业务程序的生产默认值仍是 30 秒。
+
 Rust 回环 HTTP 夹具直接绑定内核分配的端口并通过私有就绪文件交接，不执行主机名反向解析。两端 E2E 使用同一实现，两种 macOS 原生 E2E 仍是发布必过项。
 
 浏览器回归使用 Playwright 驱动真实后台和本地订阅服务，覆盖登录失败/成功、会话存储、结构化节点显示、不同节点独立选择与取消保存、订阅链接与二维码、刷新、移动导航和退出；不替代每种客户端或公网代理协议的互通验证。
@@ -71,6 +77,10 @@ Pages 使用 `docs/_config.yml` 中的 `jekyll-relative-links`，在构建时把
 版本由根 `Cargo.toml`、`version.txt`、前端包及 lockfile 同步，通过 `scripts/release.sh` / `scripts/release.ps1` 的 prepare 模式修改，按脚本帮助使用。仅维护 `main`。
 
 `vMAJOR.MINOR.PATCH` 标签触发可复用 CI 验证，再构建 Linux x86_64、Windows x86_64、macOS x86_64 / arm64。每包只含三个二进制、前端、公开模板、脚本与文档。发布前验证 SHA256SUMS、内容和隐私；发布后再次核对下载。不得在 CI、完整验证、E2E、校验和、前端未全绿时发布。
+
+公开客户验收采用候选发布再晋级：先把全部 10 个已校验资产上传草稿，Rust 工具逐项核对 API 的大小和 SHA-256，再公开为 `prerelease=true`、`make_latest=false`。客户验收必须显式使用 `--candidate`，严格绑定标签、提交和完整资产；默认公共安装验收仍拒绝预发布版本。两平台必须从公开地址真实安装、在已安装目录在线升级并保留配置数据，再通过运行与完整 E2E。候选失败时不晋级为稳定版，也不改变现有 latest。
+
+第 22 个发布作业仅在前 21 个必需作业及其关键步骤全部成功后晋级；Rust 工具重新核准同一仓库、Release run、标签提交、发布 ID 及候选证明中的全部资产指纹，防止漏测、资产替换或旧版本覆盖更高的 latest。晋级只修改 `prerelease` / `latest` 元数据，不改标签或资产，并独立读回稳定状态及 latest 身份。仓库级晋级并发锁避免不同标签竞争。Pages 仍要求整条 Release 包含晋级和读回在内全部成功，手动入口也不能绕过；仅公开候选或已有下载资产不算完成正式验收。
 
 macOS 两种架构分别使用 [GitHub 官方原生运行器](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)，发布工作流要求二进制架构、三个程序版本检查和真实回环 E2E 全部通过。
 

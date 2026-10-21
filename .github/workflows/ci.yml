@@ -383,3 +383,7 @@ jobs:
           export VERSION
           VERSION="$(tr -d '\r\n' < version.txt)"
           bash .github/scripts/assemble-bundle.sh
+      - name: Verify installed archive startup, health and owned shutdown
+        shell: bash
+        run: |
+          "$VPN233_XTASK_BIN" network installed-lifecycle --assets target/verify-package/assets --tag "v$(tr -d '\r\n' < version.txt)"

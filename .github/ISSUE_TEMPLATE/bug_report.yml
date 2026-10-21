@@ -42,7 +42,7 @@ body:
     attributes:
       label: Version or commit
       description: Output of `version.txt`, the release tag, or the commit SHA.
-      placeholder: "v2.1.0"
+      placeholder: "vMAJOR.MINOR.PATCH"
     validations:
       required: true
   - type: dropdown

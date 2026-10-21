@@ -75,7 +75,7 @@ usage() {
   printf '\n'
   printf '%s\n' "Options:"
   printf '%s\n' "  --release                 install the published GitHub release bundle"
-  printf '%s\n' "  --version VERSION         install a specific release version, e.g. 2.1.0"
+  printf '%s\n' "  --version VERSION         install a specific MAJOR.MINOR.PATCH release"
   printf '%s\n' "  --bundle FILE             install a checksum-verified offline .tar.gz/.zip bundle"
   printf '%s\n' "  --sha256 HASH             expected SHA-256 for --bundle"
   printf '%s\n' "  --prefix DIR              install directory (release mode)"

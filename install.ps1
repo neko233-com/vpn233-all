@@ -13,7 +13,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($Help) {
-    Write-Host 'Usage: install.ps1 [-Release] [-Version 2.1.0] [-Bundle FILE] [-Sha256 HASH]'
+    Write-Host 'Usage: install.ps1 [-Release] [-Version MAJOR.MINOR.PATCH] [-Bundle FILE] [-Sha256 HASH]'
     Write-Host '                   [-Prefix DIR] [-System] [-Mirror auto|off|PREFIX] [-NoStart] [-Yes] [-DryRun]'
     Write-Host 'No arguments installs the source build. Releases require SHA256SUMS; existing configuration/data are preserved.'
     return

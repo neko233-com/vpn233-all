@@ -24,6 +24,7 @@ pub fn run(args: &[String]) -> Result<()> {
         "mirror-tests" => mirrors::run(rest),
         "e2e" => e2e_data::run(rest),
         "public-install" => public_install::run(rest),
+        "installed-lifecycle" => public_install::installed_lifecycle(rest),
         _ => bail!("unknown network subcommand"),
     }
 }

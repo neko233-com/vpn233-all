@@ -21,16 +21,27 @@ use std::{
 const TASK: &str = "vpn233-pages-proof";
 const RELEASE_PATH: &str = ".github/workflows/release.yml";
 const DOCS_PATH: &str = ".github/workflows/docs.yml";
-trait Api {
+pub(crate) trait Api {
     fn get(&self, path: &str) -> Result<Value>;
     fn post(&self, path: &str, body: &Value) -> Result<Value>;
+    fn patch(&self, _path: &str, _body: &Value) -> Result<Value> {
+        bail!("github-api-mutation-unavailable")
+    }
 }
-struct GitHub {
+#[derive(Debug)]
+pub(crate) struct ApiNotFound;
+impl std::fmt::Display for ApiNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("github-api-object-not-found")
+    }
+}
+impl std::error::Error for ApiNotFound {}
+pub(crate) struct GitHub {
     client: Client,
     base: String,
 }
 impl GitHub {
-    fn new(repo: &str) -> Result<Self> {
+    pub(crate) fn new(repo: &str) -> Result<Self> {
         ensure!(
             Regex::new(r"\A[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\z")?.is_match(repo),
             "pages-invalid-repository"
@@ -67,19 +78,26 @@ impl GitHub {
             base: format!("https://api.github.com/repos/{repo}"),
         })
     }
-    fn request(&self, path: &str, body: Option<&Value>) -> Result<Value> {
+    fn request(&self, path: &str, body: Option<&Value>, patch: bool) -> Result<Value> {
         ensure!(
             path.is_empty()
                 || path.starts_with('/') && !path.contains("..") && !path.contains(['\r', '\n']),
             "pages-invalid-api-path"
         );
         let request = match body {
+            Some(value) if patch => self
+                .client
+                .patch(format!("{}{path}", self.base))
+                .json(value),
             Some(value) => self.client.post(format!("{}{path}", self.base)).json(value),
             None => self.client.get(format!("{}{path}", self.base)),
         };
         let response = request
             .send()
             .map_err(|_| anyhow!("pages-github-read-unavailable"))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(ApiNotFound.into());
+        }
         ensure!(response.status().is_success(), "pages-github-api-rejected");
         let mut bytes = Vec::new();
         response
@@ -95,10 +113,13 @@ impl GitHub {
 }
 impl Api for GitHub {
     fn get(&self, path: &str) -> Result<Value> {
-        self.request(path, None)
+        self.request(path, None, false)
     }
     fn post(&self, path: &str, body: &Value) -> Result<Value> {
-        self.request(path, Some(body))
+        self.request(path, Some(body), false)
+    }
+    fn patch(&self, path: &str, body: &Value) -> Result<Value> {
+        self.request(path, Some(body), true)
     }
 }
 trait GitState {
@@ -141,7 +162,7 @@ impl GitState for LocalGit {
         Ok(value.into())
     }
 }
-fn valid_sha(value: &str) -> bool {
+pub(crate) fn valid_sha(value: &str) -> bool {
     value.len() == 40
         && value
             .bytes()
@@ -158,7 +179,7 @@ fn number(value: &Value, key: &str) -> Result<u64> {
         .filter(|v| *v > 0)
         .ok_or_else(|| anyhow!("pages-invalid-api-id"))
 }
-fn collection(api: &impl Api, path: &str, key: Option<&str>) -> Result<Vec<Value>> {
+pub(crate) fn collection(api: &impl Api, path: &str, key: Option<&str>) -> Result<Vec<Value>> {
     let mut output = Vec::new();
     for page in 1..=100 {
         let url = format!(
@@ -197,7 +218,7 @@ fn actual_job_completed(job: &Value) -> bool {
                         .any(|s| s["name"] == "Complete job" && s["conclusion"] == "success")
             })
 }
-fn critical_steps(name: &str) -> &'static [&'static str] {
+pub(crate) fn critical_steps(name: &str) -> &'static [&'static str] {
     match name {
         "Tag and version preflight" => &["Verify main ancestry and shared version"],
         "Bundle macos-x86_64" | "Bundle macos-aarch64" => &[
@@ -210,7 +231,13 @@ fn critical_steps(name: &str) -> &'static [&'static str] {
         "Verify all checksums and archive allowlists before publication" => {
             &["Generate and independently verify exact release asset set"]
         }
-        "Publish verified release" => &["Publish official assets"],
+        "Publish public release candidate" => &[
+            "Require a new candidate release",
+            "Attach verified assets to a draft",
+            "Publish checksum-verified candidate",
+            "Preserve candidate identity proof",
+        ],
+        "Promote accepted release" => &["Promote and independently confirm stable release"],
         "Verify published downloads" => &["Download and verify published release"],
         "Public installation and online update (Linux)"
         | "Public installation and online update (Windows)" => {
@@ -244,24 +271,26 @@ fn critical_steps(name: &str) -> &'static [&'static str] {
             "Validate all generated inbounds with the official Mihomo parser",
             "Real browser UI, session, mobile and zero-external-request tests",
             "Package the real platform binaries and verify public archive contents",
+            "Verify installed archive startup, health and owned shutdown",
         ],
         "Verify (full CI) / E2E (Windows)" => &[
             "Windows E2E (PowerShell 5.1)",
             "Validate all generated inbounds with the official Mihomo parser",
             "Package the real platform binaries and verify public archive contents",
+            "Verify installed archive startup, health and owned shutdown",
         ],
         _ => &[],
     }
 }
-fn required_release_jobs(jobs: &[Value]) -> Result<Vec<String>> {
-    let expected = [
+pub(crate) fn release_job_names(promoted: bool) -> Vec<&'static str> {
+    let mut expected = vec![
         "Tag and version preflight",
         "Bundle linux-x86_64",
         "Bundle windows-x86_64",
         "Bundle macos-x86_64",
         "Bundle macos-aarch64",
         "Verify all checksums and archive allowlists before publication",
-        "Publish verified release",
+        "Publish public release candidate",
         "Verify published downloads",
         "Public installation and online update (Linux)",
         "Public installation and online update (Windows)",
@@ -277,8 +306,15 @@ fn required_release_jobs(jobs: &[Value]) -> Result<Vec<String>> {
         "Verify (full CI) / E2E (Linux)",
         "Verify (full CI) / E2E (Windows)",
     ];
+    if promoted {
+        expected.push("Promote accepted release");
+    }
+    expected
+}
+pub(crate) fn validate_release_jobs(jobs: &[Value], promoted: bool) -> Result<Vec<String>> {
+    let expected = release_job_names(promoted);
     ensure!(
-        jobs.iter().all(actual_job_completed),
+        jobs.len() == expected.len() && jobs.iter().all(actual_job_completed),
         "pages-release-jobs-not-successful"
     );
     for name in expected {
@@ -304,7 +340,7 @@ fn required_release_jobs(jobs: &[Value]) -> Result<Vec<String>> {
         .map(|j| text(j, "name").map(str::to_owned))
         .collect::<Result<_>>()
 }
-fn tag_commit(api: &impl Api, tag: &str) -> Result<String> {
+pub(crate) fn tag_commit(api: &impl Api, tag: &str) -> Result<String> {
     let reference = api.get(&format!("/git/ref/tags/{tag}"))?;
     let mut object = reference["object"].clone();
     for _ in 0..8 {
@@ -473,11 +509,10 @@ fn evaluate(api: &impl Api, git: &impl GitState, repo: &str, run_id: u64) -> Res
         valid_sha(sha) && git.ancestor(sha)?,
         "pages-release-is-not-on-main"
     );
-    let summary_lag_jobs = required_release_jobs(&collection(
-        api,
-        &format!("/actions/runs/{run_id}/jobs"),
-        Some("jobs"),
-    )?)?;
+    let summary_lag_jobs = validate_release_jobs(
+        &collection(api, &format!("/actions/runs/{run_id}/jobs"), Some("jobs"))?,
+        true,
+    )?;
     let release = api.get("/releases/latest")?;
     let tag = stable_release(&release)?;
     ensure!(
@@ -697,7 +732,8 @@ mod tests {
                 "Bundle macos-x86_64",
                 "Bundle macos-aarch64",
                 "Verify all checksums and archive allowlists before publication",
-                "Publish verified release",
+                "Publish public release candidate",
+                "Promote accepted release",
                 "Verify published downloads",
                 "Public installation and online update (Linux)",
                 "Public installation and online update (Windows)",
@@ -967,6 +1003,28 @@ mod tests {
                 .as_array_mut()
                 .unwrap()
                 .retain(|j| j["name"] != name);
+            assert!(f.gate().is_err());
+        }
+    }
+    #[test]
+    fn promotion_is_mandatory_and_its_real_business_step_cannot_be_skipped() {
+        for outcome in ["missing", "failure", "skipped"] {
+            let mut f = Fixture::new();
+            let jobs = f
+                .data
+                .get_mut("/actions/runs/7/jobs?per_page=100&page=1")
+                .unwrap()["jobs"]
+                .as_array_mut()
+                .unwrap();
+            if outcome == "missing" {
+                jobs.retain(|j| j["name"] != "Promote accepted release");
+            } else {
+                let job = jobs
+                    .iter_mut()
+                    .find(|j| j["name"] == "Promote accepted release")
+                    .unwrap();
+                job["steps"][0]["conclusion"] = outcome.into();
+            }
             assert!(f.gate().is_err());
         }
     }

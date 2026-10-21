@@ -218,12 +218,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   publish:
-    name: Publish verified release
+    name: Publish public release candidate
     needs: checksums
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -232,11 +233,24 @@ jobs:
         with:
           name: checked-release-assets
           path: dist
+      - name: Restore verified Linux Rust tool
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verified-xtask-Linux
+          path: .cache/xtask-bootstrap/debug
+      - name: Select verified Rust tool
+        run: |
+          chmod +x .cache/xtask-bootstrap/debug/vpn233-xtask
+          printf 'VPN233_XTASK_BIN=%s\n' "$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask" >> "$GITHUB_ENV"
       - name: Build release notes
         env:
           VERSION: ${{ github.ref_name }}
         run: bash .github/scripts/release-body.sh > release-body.md
-      - name: Publish official assets
+      - name: Require a new candidate release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: '"$VPN233_XTASK_BIN" release-candidate check-new --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"'
+      - name: Attach verified assets to a draft
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ github.ref_name }}
@@ -248,8 +262,23 @@ jobs:
             dist/SHA256SUMS
             dist/version.txt
           generate_release_notes: true
-          make_latest: true
+          draft: true
+          prerelease: true
+          make_latest: false
+          overwrite_files: false
           fail_on_unmatched_files: true
+      - name: Publish checksum-verified candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: '"$VPN233_XTASK_BIN" release-candidate publish --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --assets dist --proof candidate-publication-proof.json'
+      - name: Preserve candidate identity proof
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: candidate-publication-proof
+          path: candidate-publication-proof.json
+          compression-level: 1
+          retention-days: 7
+          if-no-files-found: error
   verify-release:
     name: Verify published downloads
     needs: publish
@@ -307,4 +336,35 @@ jobs:
         run: |
           XTASK_BIN="$PWD/.cache/xtask-bootstrap/debug/vpn233-xtask${{ matrix.extension }}"
           chmod +x "$XTASK_BIN"
-          "$XTASK_BIN" network public-install --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --mirror off
+          "$XTASK_BIN" network public-install --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --mirror off --candidate
+  promote:
+    name: Promote accepted release
+    needs: public-install
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: release-stable-promotion-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Restore verified Linux Rust tool
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verified-xtask-Linux
+          path: .cache/xtask-bootstrap/debug
+      - name: Restore exact candidate identity proof
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: candidate-publication-proof
+          path: .cache/release-proof
+      - name: Promote and independently confirm stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x .cache/xtask-bootstrap/debug/vpn233-xtask
+          .cache/xtask-bootstrap/debug/vpn233-xtask release-candidate promote --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --proof .cache/release-proof/candidate-publication-proof.json

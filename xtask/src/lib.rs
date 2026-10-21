@@ -5,6 +5,7 @@ pub mod network;
 pub mod pages_gate;
 pub mod privacy;
 pub mod quick_cache;
+pub mod release_candidate;
 pub mod support;
 pub mod utilities;
 pub mod verify_release;

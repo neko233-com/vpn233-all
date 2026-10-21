@@ -115,6 +115,7 @@ if [ "$quick" -eq 0 ] && [ "$skip_e2e" -eq 0 ]; then
     *) echo 'Unsupported local release packaging platform' >&2; exit 1 ;;
   esac
   PLATFORM="$platform" TARGET=local EXE_SUFFIX="$suffix" VERSION="$(tr -d '\r\n' < version.txt)" TARGET_DIR="$release_dir" BUNDLE_ROOT=target/verify-package/assets step bash .github/scripts/assemble-bundle.sh
+  step "$xtask" network installed-lifecycle --assets target/verify-package/assets --tag "v$(tr -d '\r\n' < version.txt)"
 fi
 if [ -n "$cache_ticket" ]; then
   if cache_result="$("$xtask" quick-cache store --flavor bash --engine "$cache_engine" --ticket "$cache_ticket" --checks "$checks" --elapsed "$((SECONDS - started))")"; then
