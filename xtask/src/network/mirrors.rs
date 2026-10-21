@@ -130,6 +130,7 @@ enum Kind {
 }
 #[derive(Clone, Debug)]
 struct Request {
+    parsed_at: Instant,
     route: String,
     offset: Option<usize>,
     encoding: Option<String>,
@@ -343,6 +344,7 @@ fn serve(
             .and_then(|s| s.parse::<usize>().ok())
     });
     records.lock().unwrap().push(Request {
+        parsed_at: Instant::now(),
         route: route.clone(),
         offset,
         encoding: field("Accept-Encoding"),
@@ -517,7 +519,39 @@ impl Drop for Case<'_> {
 }
 struct Transfer {
     requests: Vec<Request>,
-    elapsed: Duration,
+    child_elapsed: Duration,
+    request_elapsed: Option<Duration>,
+}
+
+fn check_source_budget(
+    transfer: &Transfer,
+    route: &str,
+    min_requests: usize,
+    max_requests: usize,
+    limit: Duration,
+) -> Result<()> {
+    let valid = (min_requests..=max_requests).contains(&transfer.requests.len())
+        && transfer
+            .requests
+            .iter()
+            .all(|request| request.route == route)
+        && transfer
+            .request_elapsed
+            .is_some_and(|elapsed| elapsed < limit);
+    if !valid {
+        let window = transfer
+            .request_elapsed
+            .map(|elapsed| elapsed.as_millis().to_string())
+            .unwrap_or_else(|| "-1".into());
+        eprintln!(
+            "mirror-http: source-budget requests={} request-window-ms={} child-ms={}",
+            transfer.requests.len(),
+            window,
+            transfer.child_elapsed.as_millis()
+        );
+        bail!("controlled source request count, route or budget window differs");
+    }
+    Ok(())
 }
 struct TransferOptions<'a> {
     hash: Option<&'a str>,
@@ -646,7 +680,16 @@ if($Installer){
                 bail!("controlled HTTP downloader process exceeded deadline or could not start");
             }
         };
-        let elapsed = begin.elapsed();
+        let finished = Instant::now();
+        let child_elapsed = finished.duration_since(begin);
+        let requests = server.requests();
+        // Use the earliest parsed request rather than worker insertion order.
+        // No request, including one parsed after child completion, has no window.
+        let request_elapsed = requests
+            .iter()
+            .map(|request| request.parsed_at)
+            .min()
+            .and_then(|first| finished.checked_duration_since(first));
         let result = (|| {
             self.stage.set("child-outcome");
             ensure!(
@@ -706,8 +749,9 @@ if($Installer){
             }
             self.stage.set("response-assertions");
             Ok(Transfer {
-                requests: server.requests(),
-                elapsed,
+                requests,
+                child_elapsed,
+                request_elapsed,
             })
         })();
         if result.is_err() {
@@ -728,7 +772,7 @@ if($Installer){
                 .filter_map(|line| line.strip_prefix("VPN233_HTTP_STAGE="))
                 .rfind(|value| ["library", "transfer", "installer", "complete"].contains(value))
                 .unwrap_or("unavailable");
-            eprintln!("mirror-http: child runtime={} phase={} exit={:?} expected-success={} elapsed-ms={} stdout-bytes={} stderr-bytes={}", runtime, stage, output.status.code(), success, elapsed.as_millis(), output.stdout.len(), output.stderr.len());
+            eprintln!("mirror-http: child runtime={} phase={} exit={:?} expected-success={} elapsed-ms={} stdout-bytes={} stderr-bytes={}", runtime, stage, output.status.code(), success, child_elapsed.as_millis(), output.stdout.len(), output.stderr.len());
             server.report();
         }
         result
@@ -852,10 +896,7 @@ fn sh(root: &Path) -> Result<()> {
     );
     count += 1;
     let result = transfer(&["slow"], &sha, "2", false, false)?;
-    ensure!(
-        result.requests.len() <= 3 && result.elapsed < Duration::from_millis(3200),
-        "SH multiplied source time budget"
-    );
+    check_source_budget(&result, "slow", 1, 3, Duration::from_millis(3200))?;
     count += 1;
     ensure!(
         transfer(&["wrong"], &sha, "5", false, false)?
@@ -1035,10 +1076,7 @@ fn ps(root: &Path) -> Result<()> {
     );
     for route in ["stall", "trickle"] {
         let result = transfer(&[route], Some(&sha), "1", false)?;
-        ensure!(
-            result.requests.len() == 1 && result.elapsed < Duration::from_secs(4),
-            "PS source deadline multiplied"
-        );
+        check_source_budget(&result, route, 1, 1, Duration::from_secs(4))?;
     }
     for invalid in [
         "not-a-sha256".into(),
@@ -1097,6 +1135,116 @@ fn ps(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_budget_rejects_an_unrecorded_request_window() {
+        let transfer = Transfer {
+            requests: vec![Request {
+                parsed_at: Instant::now(),
+                route: "slow".into(),
+                offset: None,
+                encoding: Some("identity".into()),
+                path: "/slow/fixture".into(),
+            }],
+            child_elapsed: Duration::from_secs(1),
+            request_elapsed: None,
+        };
+        assert!(check_source_budget(&transfer, "slow", 1, 3, Duration::from_millis(3200)).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn actual_slow_shell_transfer(root: &Path, shell: &Path) -> Result<Transfer> {
+        let case = Case {
+            root,
+            shell,
+            kind: Kind::Sh,
+            sequence: std::cell::Cell::new(0),
+            stage: std::cell::Cell::new("initialization"),
+            passed: std::cell::Cell::new(false),
+        };
+        let payload: Vec<_> = (0..256u16)
+            .map(|n| n as u8)
+            .cycle()
+            .take(512 * 1024)
+            .collect();
+        let sha = digest(&payload);
+        let transfer = case.transfer(
+            &["slow"],
+            &payload,
+            TransferOptions {
+                hash: Some(&sha),
+                budget: "2",
+                success: false,
+                prior_cache: false,
+                installer: false,
+            },
+        )?;
+        case.passed.set(true);
+        Ok(transfer)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn actual_shell_startup_delay_does_not_consume_the_source_request_window() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = crate::support::root().unwrap();
+        let private = tempfile::tempdir().unwrap();
+        crate::network::protect_private_directory(private.path()).unwrap();
+        let shell = private.path().join("delayed-shell");
+        private_write(
+            &shell,
+            b"#!/bin/sh\n/bin/sleep 1.5\nexec /bin/bash \"$@\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o700)).unwrap();
+        let transfer = actual_slow_shell_transfer(&root, &shell).unwrap();
+        assert!(
+            transfer.child_elapsed > Duration::from_millis(3200),
+            "real delayed shell must exceed the former whole-child threshold"
+        );
+        check_source_budget(&transfer, "slow", 1, 3, Duration::from_millis(3200)).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn actual_per_attempt_budget_reset_is_rejected_by_the_source_request_window() {
+        let root = crate::support::root().unwrap();
+        let source = fs::read_to_string(root.join("scripts/lib/mirrors.sh"))
+            .unwrap()
+            .replace("\r\n", "\n");
+        const ATTEMPT: &str = "    attempt=$((attempt + 1))";
+        assert!(
+            source.matches(ATTEMPT).count() == 1,
+            "controlled budget-reset mutation requires one retry increment"
+        );
+        let mutated = source.replacen(
+            ATTEMPT,
+            "    remaining=\"$VPN233_GH_MAX_TIME\"\n    attempt=$((attempt + 1))",
+            1,
+        );
+        let private = tempfile::tempdir().unwrap();
+        crate::network::protect_private_directory(private.path()).unwrap();
+        fs::create_dir_all(private.path().join("scripts/lib")).unwrap();
+        private_write(
+            &private.path().join("scripts/lib/mirrors.sh"),
+            mutated.as_bytes(),
+        )
+        .unwrap();
+        let transfer = actual_slow_shell_transfer(private.path(), Path::new("/bin/bash")).unwrap();
+        assert!(
+            transfer.requests.len() == 3
+                && transfer
+                    .requests
+                    .iter()
+                    .all(|request| request.route == "slow")
+                && transfer
+                    .request_elapsed
+                    .is_some_and(|elapsed| elapsed >= Duration::from_millis(3200)),
+            "real per-attempt reset must expose three delayed requests beyond the shared budget"
+        );
+        assert!(check_source_budget(&transfer, "slow", 1, 3, Duration::from_millis(3200)).is_err());
+    }
 
     fn wait_for_connection(server: &Server) {
         let begin = Instant::now();
