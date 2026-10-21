@@ -46,3 +46,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [profile.release]
 lto = "thin"
 strip = true
+
+# Native verification tools compress and hash large release assets in dev mode.
+# Optimize those hot dependencies without optimizing every debug/test crate.
+[profile.dev.package.zlib-rs]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3

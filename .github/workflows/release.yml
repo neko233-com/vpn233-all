@@ -25,7 +25,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target/xtask-bootstrap
-          key: xtask-${{ runner.os }}-hostlatest-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
+          key: xtask-${{ runner.os }}-hostlatest-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
       - name: Verify main ancestry and shared version
         run: |
           git merge-base --is-ancestor HEAD origin/main
@@ -101,6 +101,12 @@ jobs:
         run: |
           rustup show
           rustup target add "$TARGET"
+      - name: Cache the isolated native macOS verification bootstrap
+        if: matrix.reuse == ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target/xtask-bootstrap
+          key: xtask-${{ runner.os }}-${{ matrix.platform }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'xtask/**', 'scripts/xtask.*') }}
       - name: Remap source and dependency paths for privacy
         if: matrix.reuse == ''
         shell: bash

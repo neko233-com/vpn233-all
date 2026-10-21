@@ -27,6 +27,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-all.ps1
 
 脚本在独立的 `target/xtask-bootstrap` 构建开发工具，并把其实际二进制内容纳入缓存指纹。业务编译和测试使用各自 target，不会在一次缓存事务中改写验证工具。正式包仍只有三个业务程序，开发工具不随安装包分发。
 
+开发构建仅为压缩与哈希热路径依赖 `zlib-rs`、`sha2` 设置包级 `opt-level = 3`，减少纯 Rust 工具处理归档的耗时；其余开发和发布 profile 保持既有设置。CI 与发布的原生工具编译缓存同时包含根 `Cargo.toml`、锁文件、工具链和工具源码的内容指纹，修改这些优化配置会重新构建工具，完整验证仍执行全部真实检查。
+
 Quick 使用 Cargo 自身管理的锁定 crates 缓存，不逐次重扫用户全局 Cargo registry 或每个工具安装目录。手工修改这些全局安装内容后，应使用强制重跑选项；完整验证始终运行真实编译与测试。
 
 首次安装或更换前端依赖的 Quick 需要下一次依赖稳定的真实检查成功后才保存报告。设置自定义脚本启动文件、Node 启动选项或 Rust 编译包装器时保守禁用结果缓存。
