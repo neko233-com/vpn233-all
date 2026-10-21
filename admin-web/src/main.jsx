@@ -840,13 +840,26 @@ function DeployCommands({ version, ghMirror, onGhMirrorChange, onToast, t }) {
   const mirrorMode = mirror.prefix || 'off'
   const psCommand = [
     "$setup = Join-Path ([IO.Path]::GetTempPath()) ('vpn233-install-' + [guid]::NewGuid().ToString('N') + '.ps1')",
-    mirror.prefix ? `try { Invoke-WebRequest '${mirror.prefix}${DEPLOY_RAW_BASE}install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }\ncatch { Invoke-WebRequest '${DEPLOY_RAW_BASE}install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }` : `Invoke-WebRequest '${DEPLOY_RAW_BASE}install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop`,
-    `powershell -NoProfile -ExecutionPolicy Bypass -File $setup -Release -Mirror '${mirrorMode}' -Yes`,
-  ].filter(Boolean).join('\n')
+    "$previousTls = [Net.ServicePointManager]::SecurityProtocol",
+    "try {",
+    "  [Net.ServicePointManager]::SecurityProtocol = $previousTls -bor [Net.SecurityProtocolType]::Tls12",
+    mirror.prefix ? `  try { Invoke-WebRequest -UseBasicParsing '${mirror.prefix}${DEPLOY_RAW_BASE}install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }\n  catch { Invoke-WebRequest -UseBasicParsing '${DEPLOY_RAW_BASE}install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }` : `  Invoke-WebRequest -UseBasicParsing '${DEPLOY_RAW_BASE}install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop`,
+    `  powershell -NoProfile -ExecutionPolicy Bypass -File $setup -Release -Mirror '${mirrorMode}' -Yes`,
+    "  if ($LASTEXITCODE -ne 0) { throw 'VPN233 installation failed.' }",
+    "}",
+    "finally {",
+    "  if (Test-Path -LiteralPath $setup) { Remove-Item -LiteralPath $setup -Force }",
+    "  [Net.ServicePointManager]::SecurityProtocol = $previousTls",
+    "}",
+  ].join('\n')
   const shCommand = [
-    'setup="$(mktemp)"',
-    mirror.prefix ? `(curl -fL --connect-timeout 5 --max-time 30 '${mirror.prefix}${DEPLOY_RAW_BASE}install.sh' -o "$setup" || curl -fL --connect-timeout 5 --max-time 30 '${DEPLOY_RAW_BASE}install.sh' -o "$setup") &&` : `curl -fL --connect-timeout 5 --max-time 30 '${DEPLOY_RAW_BASE}install.sh' -o "$setup" &&`,
-    `bash "$setup" --release --mirror '${mirrorMode}' --yes`,
+    "(",
+    "  set -eu",
+    "  setup=\"$(mktemp \"${TMPDIR:-/tmp}/vpn233-install.XXXXXXXX\")\"",
+    "  trap 'rm -f -- \"$setup\"' EXIT",
+    mirror.prefix ? `  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --connect-timeout 5 --max-time 30 '${mirror.prefix}${DEPLOY_RAW_BASE}install.sh' -o "$setup" ||\n    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --connect-timeout 5 --max-time 30 '${DEPLOY_RAW_BASE}install.sh' -o "$setup"` : `  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --connect-timeout 5 --max-time 30 '${DEPLOY_RAW_BASE}install.sh' -o "$setup"`,
+    `  bash "$setup" --release --mirror '${mirrorMode}' --yes`,
+    ")",
   ].join('\n')
   const blocks = [{ id: 'ps', title: t('deployPsTitle'), command: psCommand }, { id: 'sh', title: t('deployShTitle'), command: shCommand }]
   const copy = async command => { try { await copyText(command); onToast(t('copied')) } catch { onToast(t('copyFailed')) } }

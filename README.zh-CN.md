@@ -9,19 +9,32 @@
 Linux / macOS：
 
 ```bash
-setup="$(mktemp)"
-(curl -fL --connect-timeout 5 --max-time 30 https://ghproxy.net/https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.sh -o "$setup" ||
- curl -fL --connect-timeout 5 --max-time 30 https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.sh -o "$setup") &&
-bash "$setup" --release --mirror auto
+(
+  set -eu
+  setup="$(mktemp "${TMPDIR:-/tmp}/vpn233-install.XXXXXXXX")"
+  trap 'rm -f -- "$setup"' EXIT
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --connect-timeout 5 --max-time 30 'https://ghproxy.net/https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.sh' -o "$setup" ||
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL --connect-timeout 5 --max-time 30 'https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.sh' -o "$setup"
+  bash "$setup" --release --mirror 'auto'
+)
 ```
 
 Windows PowerShell：
 
 ```powershell
 $setup = Join-Path ([IO.Path]::GetTempPath()) ('vpn233-install-' + [guid]::NewGuid().ToString('N') + '.ps1')
-try { Invoke-WebRequest 'https://ghproxy.net/https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }
-catch { Invoke-WebRequest 'https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }
-powershell -NoProfile -ExecutionPolicy Bypass -File $setup -Release -Mirror auto
+$previousTls = [Net.ServicePointManager]::SecurityProtocol
+try {
+  [Net.ServicePointManager]::SecurityProtocol = $previousTls -bor [Net.SecurityProtocolType]::Tls12
+  try { Invoke-WebRequest -UseBasicParsing 'https://ghproxy.net/https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }
+  catch { Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/neko233-com/vpn233-all/main/install.ps1' -OutFile $setup -TimeoutSec 30 -ErrorAction Stop }
+  powershell -NoProfile -ExecutionPolicy Bypass -File $setup -Release -Mirror 'auto'
+  if ($LASTEXITCODE -ne 0) { throw 'VPN233 installation failed.' }
+}
+finally {
+  if (Test-Path -LiteralPath $setup) { Remove-Item -LiteralPath $setup -Force }
+  [Net.ServicePointManager]::SecurityProtocol = $previousTls
+}
 ```
 
 命令下载公开安装器，需要时可先检查再执行；对应平台必须已有正式发布。安装器自动回退 GitHub 镜像、校验 SHA-256，默认安装到用户 `.vpn233`。新配置仅监听本机，随机密码只保存在本地私密配置，不打印。升级保留配置和数据。[离线部署、系统服务、更新](docs/deployment.md)。
