@@ -107,3 +107,100 @@ fn verification_tool_paths_stay_outside_the_product_target_cache() {
         "hidden-directory upload must select exactly the scanned tool and fail if missing"
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn copied_bootstrap_restores_tls_when_a_locked_tempfile_cannot_be_removed() {
+    let root = support::root().unwrap();
+    let readme = fs::read_to_string(root.join("README.md")).unwrap();
+    let copied = readme
+        .split("```powershell")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap()
+        .trim();
+    let script = r#"
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+$candidate=@'
+__COPIED_BOOTSTRAP__
+'@
+$initialTls=[Net.ServicePointManager]::SecurityProtocol
+function Invoke-WebRequest {
+    [CmdletBinding()]
+    param([Parameter(Position=0)][string]$Uri,[switch]$UseBasicParsing,[string]$OutFile,[int]$TimeoutSec)
+    if(-not $UseBasicParsing){throw 'bootstrap basic parsing missing'}
+    $global:downloads++
+    $global:downloadedPath=$OutFile
+    $global:lockedFile=[IO.File]::Open($OutFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Read)
+    $bytes=[Text.Encoding]::UTF8.GetBytes('synthetic bytes; never execute this file')
+    $global:lockedFile.Write($bytes,0,$bytes.Length)
+    $global:lockedFile.Flush()
+}
+function powershell {
+    $global:children++
+    & $env:ComSpec /d /c "exit $global:fixtureExit"
+    $global:LASTEXITCODE=$LASTEXITCODE
+}
+try {
+    foreach($fixtureExit in @(0,17)) {
+        $global:fixtureExit=$fixtureExit
+        $global:LASTEXITCODE=-99
+        $global:downloads=0
+        $global:children=0
+        $global:downloadedPath=''
+        $global:lockedFile=$null
+        [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::SystemDefault
+        $failed=$false
+        $cleanupFailed=$false
+        try {
+            try { & ([ScriptBlock]::Create($candidate)) }
+            catch {
+                $failed=$true
+                $cleanupFailed=$_.InvocationInfo.MyCommand.Name -eq 'Remove-Item'
+            }
+            if(-not $failed -or -not $cleanupFailed){throw 'locked bootstrap must preserve cleanup failure'}
+            if($global:downloads -ne 1 -or $global:children -ne 1){throw 'unexpected bootstrap control flow'}
+            if($global:LASTEXITCODE -ne $fixtureExit){throw 'bootstrap native status changed'}
+            if([Net.ServicePointManager]::SecurityProtocol -ne [Net.SecurityProtocolType]::SystemDefault){throw 'bootstrap TLS was not restored'}
+            if(-not [IO.File]::Exists($global:downloadedPath)){throw 'locked bootstrap fixture was unexpectedly removed'}
+        }
+        finally {
+            if($null -ne $global:lockedFile){$global:lockedFile.Dispose()}
+            if($global:downloadedPath){[IO.File]::Delete($global:downloadedPath)}
+        }
+    }
+}
+finally { [Net.ServicePointManager]::SecurityProtocol=$initialTls }
+Write-Output 'locked bootstrap cleanup: 2 scenarios passed; zero network or downloaded-script execution'
+"#
+    .replace("__COPIED_BOOTSTRAP__", copied);
+    // Close the writer before PowerShell opens the script with read sharing.
+    let directory = tempfile::tempdir().unwrap();
+    let probe = directory.path().join("locked-bootstrap.ps1");
+    fs::write(&probe, script).unwrap();
+    let powershell = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let output = support::process_output(
+        Command::new(powershell)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
+            .arg(&probe),
+        None,
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "locked tempfile regression failed; private child output withheld"
+    );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains("locked bootstrap cleanup: 2 scenarios passed"));
+}

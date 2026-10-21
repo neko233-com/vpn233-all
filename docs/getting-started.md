@@ -31,8 +31,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'VPN233 installation failed.' }
 }
 finally {
-  if (Test-Path -LiteralPath $setup) { Remove-Item -LiteralPath $setup -Force }
-  [Net.ServicePointManager]::SecurityProtocol = $previousTls
+  try {
+    if (Test-Path -LiteralPath $setup) { Remove-Item -LiteralPath $setup -Force }
+  }
+  finally { [Net.ServicePointManager]::SecurityProtocol = $previousTls }
 }
 ```
 
